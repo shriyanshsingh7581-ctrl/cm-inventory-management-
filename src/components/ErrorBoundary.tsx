@@ -36,8 +36,16 @@ export class ErrorBoundary extends Component<Props, State> {
         parsedError = null;
       }
 
+      const displayMessage = (
+        parsedError && typeof parsedError.error === 'string'
+          ? parsedError.error
+          : this.state.errorMessage
+      )
+        .replace(/Firebase:\s*/gi, '')
+        .replace(/Firestore/gi, 'Cloud Database');
+
       return (
-        <div className="min-h-screen bg-[#F6F7F8] flex items-center justify-center p-4">
+        <div className="min-h-dvh bg-[#F6F7F8] flex items-center justify-center p-4 overflow-y-auto">
           <div className="w-full max-w-md bg-white rounded-2xl border border-[#E5E7EB] p-6 shadow-sm">
             <div className="w-12 h-12 rounded-xl bg-red-50 text-red-600 flex items-center justify-center mb-4">
               <AlertTriangle className="w-6 h-6" />
@@ -45,16 +53,7 @@ export class ErrorBoundary extends Component<Props, State> {
             <h2 className="text-lg font-bold text-[#111827] mb-1">
               Database or Application Notice
             </h2>
-            <p className="text-sm text-[#6B7280] mb-4">
-              {parsedError && typeof parsedError.error === 'string'
-                ? parsedError.error
-                : this.state.errorMessage}
-            </p>
-            {parsedError && (
-              <pre className="text-xs font-mono bg-[#F6F7F8] p-3 rounded-xl border border-[#E5E7EB] overflow-x-auto text-[#374151] mb-4">
-                {JSON.stringify(parsedError, null, 2)}
-              </pre>
-            )}
+            <p className="text-sm text-[#6B7280] mb-4">{displayMessage}</p>
             <button
               onClick={() => {
                 this.setState({ hasError: false, errorMessage: '' });

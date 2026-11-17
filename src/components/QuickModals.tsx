@@ -104,7 +104,7 @@ export const DuesModal: React.FC<DuesModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl p-5 space-y-4 shadow-2xl animate-sheet-up max-h-[88vh] overflow-y-auto no-scrollbar">
+      <div className="w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl p-5 space-y-4 shadow-2xl animate-sheet-up max-h-[88dvh] overflow-y-auto touch-pan-y no-scrollbar">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-red-50 text-red-600 flex items-center justify-center">
@@ -818,7 +818,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
           Shop Settings &amp; Tools
         </h1>
         <p className="text-xs text-[#6B7280]">
-          Multi-tenant isolated account: {shopProfile.email}
+          Shop Account: {shopProfile.email}
         </p>
       </div>
 
@@ -947,7 +947,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
           <div className="flex items-center gap-2">
             <PlayCircle className="w-4 h-4 text-[#0F7B49]" />
             <span className="font-display font-semibold text-sm text-[#111827]">
-              Watch MobileOne Old Phone Walkthrough Video
+              Watch App Walkthrough Video
             </span>
           </div>
           <span className="text-xs font-semibold text-[#0F7B49]">

@@ -342,7 +342,7 @@ export function AppContent() {
       {/* Responsive Shell: Full-bleed native mobile app on phones/APK, and clean multi-column workspace on wide desktop screens */}
       <div className="max-w-6xl mx-auto lg:grid lg:grid-cols-12 lg:gap-6 lg:py-6 lg:px-6">
         {/* Primary Native Mobile App Column */}
-        <div className="lg:col-span-7 xl:col-span-6 bg-[#F6F7F8] lg:bg-white lg:rounded-3xl lg:border lg:border-[#E5E7EB] lg:shadow-sm lg:overflow-hidden min-h-screen lg:min-h-[820px] flex flex-col relative">
+        <div className="lg:col-span-7 xl:col-span-6 bg-[#F6F7F8] lg:bg-white lg:rounded-3xl lg:border lg:border-[#E5E7EB] lg:shadow-sm lg:overflow-x-clip min-h-dvh lg:min-h-[820px] flex flex-col relative">
           {/* ==============================================================
               HOME TAB (Exact match to video 00:04)
           ============================================================== */}
@@ -487,7 +487,7 @@ export function AppContent() {
                   <div>
                     <div className="font-display font-bold text-sm text-[#92400E]">
                       {activeShop.planStatus === 'pro'
-                        ? 'MobileOne Pro Active · 365 days'
+                        ? 'CM Inventory Management Pro Active · 365 days'
                         : `Free trial (Pro) · ${activeShop.trialDaysLeft} days left`}
                     </div>
                     <div className="text-xs text-[#B45309] mt-0.5 leading-snug">
@@ -757,7 +757,7 @@ export function AppContent() {
                     CM Inventory Management · Live Sync
                   </h2>
                   <p className="text-xs text-[#6B7280]">
-                    Firestore Multi-Tenant Path: /users/{currentUser.uid.slice(0, 8)}...
+                    Cloud Sync Active · Shop Account: {activeShop.shopName}
                   </p>
                 </div>
               </div>

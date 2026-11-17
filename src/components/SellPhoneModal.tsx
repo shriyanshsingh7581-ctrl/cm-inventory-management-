@@ -174,8 +174,8 @@ export const SellPhoneModal: React.FC<SellPhoneModalProps> = ({
 
   if (soldSuccess) {
     return (
-      <div className="fixed inset-0 z-50 bg-[#F6F7F8] flex flex-col">
-        <div className="bg-white px-4 py-3.5 border-b border-[#E5E7EB] flex items-center gap-3">
+      <div className="fixed inset-0 h-dvh z-50 bg-[#F6F7F8] flex flex-col">
+        <div className="bg-white px-4 py-3.5 border-b border-[#E5E7EB] flex items-center gap-3 shrink-0">
           <button
             type="button"
             onClick={onClose}
@@ -188,7 +188,7 @@ export const SellPhoneModal: React.FC<SellPhoneModalProps> = ({
           </h2>
         </div>
 
-        <div className="flex-1 p-4 max-w-md mx-auto w-full space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto touch-pan-y p-4 max-w-md mx-auto w-full space-y-4">
           <div className="bg-[#E8F5EE] border border-[#A7F3D0] rounded-2xl p-5 text-center space-y-2">
             <div className="w-12 h-12 rounded-full bg-[#0F7B49] text-white flex items-center justify-center mx-auto">
               <Check className="w-6 h-6 stroke-[2.5]" />
@@ -255,8 +255,8 @@ export const SellPhoneModal: React.FC<SellPhoneModalProps> = ({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-[#F6F7F8] flex flex-col">
-      <div className="bg-white px-4 py-3.5 border-b border-[#E5E7EB] flex items-center justify-between">
+    <div className="fixed inset-0 h-dvh z-50 bg-[#F6F7F8] flex flex-col">
+      <div className="bg-white px-4 py-3.5 border-b border-[#E5E7EB] flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -278,7 +278,7 @@ export const SellPhoneModal: React.FC<SellPhoneModalProps> = ({
 
       <form
         onSubmit={handleCompleteSale}
-        className="flex-1 overflow-y-auto p-4 max-w-xl mx-auto w-full space-y-4 pb-28 no-scrollbar"
+        className="flex-1 min-h-0 overflow-y-auto touch-pan-y p-4 max-w-xl mx-auto w-full space-y-4 pb-28 no-scrollbar"
       >
         {/* Select Phone from Stock */}
         <div>

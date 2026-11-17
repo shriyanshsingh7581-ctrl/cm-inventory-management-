@@ -571,9 +571,9 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
     };
 
     return (
-      <div className="fixed inset-0 z-40 bg-[#F6F7F8] flex flex-col">
+      <div className="fixed inset-0 h-dvh z-40 bg-[#F6F7F8] flex flex-col">
         {/* Top Bar matching 00:51 */}
-        <div className="bg-white px-4 py-3.5 border-b border-[#E5E7EB] flex items-center gap-3">
+        <div className="bg-white px-4 py-3.5 border-b border-[#E5E7EB] flex items-center gap-3 shrink-0">
           <button
             type="button"
             onClick={onClose}
@@ -586,7 +586,7 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
           </h2>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 max-w-xl mx-auto w-full pb-28 no-scrollbar">
+        <div className="flex-1 min-h-0 overflow-y-auto touch-pan-y p-4 space-y-4 max-w-xl mx-auto w-full pb-28 no-scrollbar">
           {/* Green Confirmation Card */}
           <div className="bg-[#E8F5EE] border border-[#A7F3D0] rounded-2xl p-4 flex items-center gap-3.5">
             <div className="w-10 h-10 rounded-full bg-[#0F7B49] text-white flex items-center justify-center shrink-0">
@@ -789,7 +789,7 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
   }
 
   return (
-    <div className="fixed inset-0 z-40 bg-[#F6F7F8] flex flex-col">
+    <div className="fixed inset-0 h-dvh z-40 bg-[#F6F7F8] flex flex-col">
       {/* Hidden File Input for Camera / Gallery Upload */}
       <input
         ref={fileInputRef}
@@ -801,7 +801,7 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
       />
 
       {/* Top Wizard Header matching video 00:11 */}
-      <div className="bg-white px-4 pt-3 pb-2.5">
+      <div className="bg-white px-4 pt-3 pb-2.5 shrink-0">
         <div className="max-w-xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button
@@ -836,7 +836,7 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
       </div>
 
       {/* Continuous Green Progress Bar */}
-      <div className="w-full h-1 bg-[#E5E7EB]">
+      <div className="w-full h-1 bg-[#E5E7EB] shrink-0">
         <div
           className="h-full bg-[#0F7B49] transition-all duration-200"
           style={{ width: `${(step / 8) * 100}%` }}
@@ -844,7 +844,7 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
       </div>
 
       {/* Step Body */}
-      <div className="flex-1 overflow-y-auto p-4 max-w-xl mx-auto w-full pb-28 no-scrollbar space-y-4">
+      <div className="flex-1 min-h-0 overflow-y-auto touch-pan-y p-4 max-w-xl mx-auto w-full pb-28 no-scrollbar space-y-4">
         {validationError && (
           <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs font-semibold text-red-700 flex items-center justify-between">
             <span>{validationError}</span>
