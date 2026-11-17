@@ -1,0 +1,284 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function hasParentShop(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId)) &&
+        get(/databases/$(database)/documents/users/$(userId)).data.uid == request.auth.uid;
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll([
+          'uid', 'email', 'shopName', 'ownerName', 'phone', 'city',
+          'planStatus', 'trialDaysLeft', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'uid', 'email', 'shopName', 'ownerName', 'phone', 'city',
+          'planStatus', 'trialDaysLeft', 'createdAt', 'updatedAt'
+        ]) &&
+        data.uid is string && data.uid.size() <= 128 && data.uid == request.auth.uid && data.uid == userId &&
+        data.email is string && data.email.size() <= 254 &&
+        data.shopName is string && data.shopName.size() >= 1 && data.shopName.size() <= 120 &&
+        data.ownerName is string && data.ownerName.size() >= 1 && data.ownerName.size() <= 120 &&
+        data.phone is string && data.phone.size() <= 20 &&
+        data.city is string && data.city.size() <= 200 &&
+        data.planStatus is string && data.planStatus.size() <= 20 &&
+        (data.planStatus == 'trial' || data.planStatus == 'pro') &&
+        data.trialDaysLeft is int && data.trialDaysLeft >= 0 && data.trialDaysLeft <= 365 &&
+        data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    function isValidInventoryPart1(data, userId, phoneId) {
+      return data.keys().hasAll([
+          'id', 'userId', 'stockCode', 'noImeiDeadPhone', 'imei', 'imei2',
+          'brand', 'model', 'ram', 'storage', 'colour',
+          'photoFront', 'photoBack', 'photoSides', 'photoScreenOn', 'accessories',
+          'conditionScreen', 'conditionBody', 'conditionCamera', 'conditionBiometrics',
+          'conditionCharging', 'conditionAudio', 'conditionButtons',
+          'batteryHealth', 'checksPassed', 'grade',
+          'buyingPrice', 'expectedSellingPrice', 'actualSellingPrice', 'expectedProfit', 'notes',
+          'sellerName', 'sellerMobile', 'sellerAddress', 'idType', 'idMasked',
+          'paymentMethod', 'paidAmount', 'status', 'sourceType',
+          'buyerName', 'buyerMobile', 'purchaseDate', 'daysInStock', 'kycId',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'userId', 'stockCode', 'noImeiDeadPhone', 'imei', 'imei2',
+          'brand', 'model', 'ram', 'storage', 'colour',
+          'photoFront', 'photoBack', 'photoSides', 'photoScreenOn', 'accessories',
+          'conditionScreen', 'conditionBody', 'conditionCamera', 'conditionBiometrics',
+          'conditionCharging', 'conditionAudio', 'conditionButtons',
+          'batteryHealth', 'checksPassed', 'grade',
+          'buyingPrice', 'expectedSellingPrice', 'actualSellingPrice', 'expectedProfit', 'notes',
+          'sellerName', 'sellerMobile', 'sellerAddress', 'idType', 'idMasked',
+          'paymentMethod', 'paidAmount', 'status', 'sourceType',
+          'buyerName', 'buyerMobile', 'purchaseDate', 'daysInStock', 'kycId',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.id is string && data.id.size() <= 128 && data.id == phoneId &&
+        data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid && data.userId == userId &&
+        data.stockCode is string && data.stockCode.size() <= 40 &&
+        data.noImeiDeadPhone is bool &&
+        data.imei is string && data.imei.size() <= 32 &&
+        data.imei2 is string && data.imei2.size() <= 32 &&
+        data.brand is string && data.brand.size() <= 60 &&
+        data.model is string && data.model.size() <= 100 &&
+        data.ram is string && data.ram.size() <= 20 &&
+        data.storage is string && data.storage.size() <= 20 &&
+        data.colour is string && data.colour.size() <= 40 &&
+        data.photoFront is string && data.photoFront.size() <= 150000 &&
+        data.photoBack is string && data.photoBack.size() <= 150000 &&
+        data.photoSides is string && data.photoSides.size() <= 150000 &&
+        data.photoScreenOn is string && data.photoScreenOn.size() <= 150000 &&
+        data.accessories is list && data.accessories.size() <= 10 &&
+        (data.accessories.size() == 0 || (data.accessories[0] is string && data.accessories[0].size() <= 30));
+    }
+
+    function isValidInventoryPart2(data) {
+      return data.conditionScreen is string && data.conditionScreen.size() <= 10 &&
+        data.conditionBody is string && data.conditionBody.size() <= 10 &&
+        data.conditionCamera is string && data.conditionCamera.size() <= 10 &&
+        data.conditionBiometrics is string && data.conditionBiometrics.size() <= 10 &&
+        data.conditionCharging is string && data.conditionCharging.size() <= 10 &&
+        data.conditionAudio is string && data.conditionAudio.size() <= 10 &&
+        data.conditionButtons is string && data.conditionButtons.size() <= 10 &&
+        data.batteryHealth is int && data.batteryHealth >= 0 && data.batteryHealth <= 100 &&
+        data.checksPassed is int && data.checksPassed >= 0 && data.checksPassed <= 8 &&
+        data.grade is string && data.grade.size() == 1 &&
+        data.buyingPrice is int && data.buyingPrice >= 0 &&
+        data.expectedSellingPrice is int && data.expectedSellingPrice >= 0 &&
+        data.actualSellingPrice is int && data.actualSellingPrice >= 0 &&
+        data.expectedProfit is int &&
+        data.notes is string && data.notes.size() <= 500 &&
+        data.sellerName is string && data.sellerName.size() <= 120 &&
+        data.sellerMobile is string && data.sellerMobile.size() <= 20 &&
+        data.sellerAddress is string && data.sellerAddress.size() <= 300 &&
+        data.idType is string && data.idType.size() <= 40 &&
+        data.idMasked is string && data.idMasked.size() <= 30 &&
+        data.paymentMethod is string && data.paymentMethod.size() <= 40 &&
+        data.paidAmount is int && data.paidAmount >= 0 &&
+        data.status is string && data.status.size() <= 20 &&
+        (data.status == 'Ready' || data.status == 'Under repair' || data.status == 'Sold') &&
+        data.sourceType is string && data.sourceType.size() <= 20 &&
+        data.buyerName is string && data.buyerName.size() <= 120 &&
+        data.buyerMobile is string && data.buyerMobile.size() <= 20 &&
+        data.purchaseDate is string && data.purchaseDate.size() <= 40 &&
+        data.daysInStock is int && data.daysInStock >= 0 &&
+        data.kycId is string && data.kycId.size() <= 128 &&
+        data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    function isValidKycRecord(data, userId, kycId) {
+      return data.keys().hasAll([
+          'id', 'userId', 'phoneId', 'stockCode', 'transactionType', 'dateLabel',
+          'brand', 'model', 'ram', 'storage', 'imei', 'price', 'paymentMethod',
+          'partyName', 'partyMobile', 'partyAddress', 'idType', 'idLast4', 'idMasked',
+          'idFrontUrl', 'idBackUrl', 'sellerPhotoUrl', 'signatureDataUrl',
+          'shapathLanguage', 'idVerified', 'shapathSigned', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'userId', 'phoneId', 'stockCode', 'transactionType', 'dateLabel',
+          'brand', 'model', 'ram', 'storage', 'imei', 'price', 'paymentMethod',
+          'partyName', 'partyMobile', 'partyAddress', 'idType', 'idLast4', 'idMasked',
+          'idFrontUrl', 'idBackUrl', 'sellerPhotoUrl', 'signatureDataUrl',
+          'shapathLanguage', 'idVerified', 'shapathSigned', 'createdAt', 'updatedAt'
+        ]) &&
+        data.id is string && data.id.size() <= 128 && data.id == kycId &&
+        data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid && data.userId == userId &&
+        data.phoneId is string && data.phoneId.size() <= 128 &&
+        data.stockCode is string && data.stockCode.size() <= 40 &&
+        data.transactionType is string && data.transactionType.size() <= 10 &&
+        data.dateLabel is string && data.dateLabel.size() <= 40 &&
+        data.brand is string && data.brand.size() <= 60 &&
+        data.model is string && data.model.size() <= 100 &&
+        data.ram is string && data.ram.size() <= 20 &&
+        data.storage is string && data.storage.size() <= 20 &&
+        data.imei is string && data.imei.size() <= 32 &&
+        data.price is int && data.price >= 0 &&
+        data.paymentMethod is string && data.paymentMethod.size() <= 40 &&
+        data.partyName is string && data.partyName.size() <= 120 &&
+        data.partyMobile is string && data.partyMobile.size() <= 20 &&
+        data.partyAddress is string && data.partyAddress.size() <= 300 &&
+        data.idType is string && data.idType.size() <= 40 &&
+        data.idLast4 is string && data.idLast4.size() == 4 &&
+        data.idMasked is string && data.idMasked.size() <= 30 &&
+        data.idFrontUrl is string && data.idFrontUrl.size() <= 150000 &&
+        data.idBackUrl is string && data.idBackUrl.size() <= 150000 &&
+        data.sellerPhotoUrl is string && data.sellerPhotoUrl.size() <= 150000 &&
+        data.signatureDataUrl is string && data.signatureDataUrl.size() <= 150000 &&
+        data.shapathLanguage is string && data.shapathLanguage.size() <= 12 &&
+        data.idVerified is bool && data.shapathSigned is bool &&
+        data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    function isValidDueRecord(data, userId, dueId) {
+      return data.keys().hasAll([
+          'id', 'userId', 'partyName', 'partyMobile', 'phoneModel',
+          'amount', 'dueType', 'status', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'userId', 'partyName', 'partyMobile', 'phoneModel',
+          'amount', 'dueType', 'status', 'createdAt', 'updatedAt'
+        ]) &&
+        data.id is string && data.id.size() <= 128 && data.id == dueId &&
+        data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid && data.userId == userId &&
+        data.partyName is string && data.partyName.size() <= 120 &&
+        data.partyMobile is string && data.partyMobile.size() <= 20 &&
+        data.phoneModel is string && data.phoneModel.size() <= 100 &&
+        data.amount is int && data.amount > 0 &&
+        data.dueType is string && data.dueType.size() <= 15 &&
+        data.status is string && data.status.size() <= 12 &&
+        (data.status == 'Pending' || data.status == 'Settled') &&
+        data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId) && (resource == null || resource.data.uid == request.auth.uid);
+      allow create: if isOwner(userId) && isValidId(userId) &&
+        isValidUserProfile(request.resource.data, userId) &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.updatedAt == request.time;
+      allow update: if isOwner(userId) && isValidId(userId) &&
+        isValidUserProfile(request.resource.data, userId) &&
+        request.resource.data.uid == resource.data.uid &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.updatedAt == request.time &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'shopName', 'ownerName', 'phone', 'city', 'planStatus', 'trialDaysLeft', 'updatedAt'
+        ]);
+      allow delete: if false;
+
+      match /inventory/{phoneId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(phoneId) &&
+          (resource == null || resource.data.userId == request.auth.uid) && hasParentShop(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(phoneId) &&
+          isValidInventoryPart1(request.resource.data, userId, phoneId) &&
+          isValidInventoryPart2(request.resource.data) &&
+          request.resource.data.createdAt == request.time &&
+          request.resource.data.updatedAt == request.time &&
+          hasParentShop(userId);
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(phoneId) &&
+          isValidInventoryPart1(request.resource.data, userId, phoneId) &&
+          isValidInventoryPart2(request.resource.data) &&
+          resource.data.status != 'Sold' &&
+          request.resource.data.id == resource.data.id &&
+          request.resource.data.userId == resource.data.userId &&
+          request.resource.data.createdAt == resource.data.createdAt &&
+          request.resource.data.updatedAt == request.time &&
+          (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'actualSellingPrice', 'expectedProfit', 'buyerName', 'buyerMobile', 'updatedAt'
+            ]) ||
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'expectedSellingPrice', 'expectedProfit', 'notes', 'updatedAt'
+            ])
+          ) &&
+          hasParentShop(userId);
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(phoneId) &&
+          resource.data.userId == request.auth.uid && hasParentShop(userId);
+      }
+
+      match /kyc_records/{kycId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(kycId) &&
+          (resource == null || resource.data.userId == request.auth.uid) && hasParentShop(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(kycId) &&
+          isValidKycRecord(request.resource.data, userId, kycId) &&
+          request.resource.data.createdAt == request.time &&
+          request.resource.data.updatedAt == request.time &&
+          hasParentShop(userId);
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(kycId) &&
+          isValidKycRecord(request.resource.data, userId, kycId) &&
+          request.resource.data.id == resource.data.id &&
+          request.resource.data.userId == resource.data.userId &&
+          request.resource.data.createdAt == resource.data.createdAt &&
+          request.resource.data.updatedAt == request.time &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'shapathLanguage', 'updatedAt'
+          ]) &&
+          hasParentShop(userId);
+        allow delete: if false;
+      }
+
+      match /dues/{dueId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(dueId) &&
+          (resource == null || resource.data.userId == request.auth.uid) && hasParentShop(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(dueId) &&
+          isValidDueRecord(request.resource.data, userId, dueId) &&
+          request.resource.data.createdAt == request.time &&
+          request.resource.data.updatedAt == request.time &&
+          hasParentShop(userId);
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(dueId) &&
+          isValidDueRecord(request.resource.data, userId, dueId) &&
+          resource.data.status != 'Settled' &&
+          request.resource.data.id == resource.data.id &&
+          request.resource.data.userId == resource.data.userId &&
+          request.resource.data.createdAt == resource.data.createdAt &&
+          request.resource.data.updatedAt == request.time &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'amount', 'updatedAt'
+          ]) &&
+          hasParentShop(userId);
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(dueId) &&
+          resource.data.userId == request.auth.uid && hasParentShop(userId);
+      }
+    }
+  }
+}

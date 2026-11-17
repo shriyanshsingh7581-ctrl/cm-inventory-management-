@@ -1,0 +1,6 @@
+{
+  "name": "MobileOne Old Phone — Inventory & KYC",
+  "description": "Used Phone Inventory, 8-Step Buy Phone Wizard, Shapath Patra PDF Generator, and Police KYC Register Management System.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

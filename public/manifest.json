@@ -1,0 +1,24 @@
+{
+  "name": "CM Inventory Management",
+  "short_name": "CM Inventory",
+  "description": "CM Inventory Management — Used Phone Inventory, 8-Step Buy Phone Wizard, Shapath Patra PDF Generator, and Police KYC Register Management System.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F6F7F8",
+  "theme_color": "#0F7B49",
+  "icons": [
+    {
+      "src": "/assets/aistudio/file_00000000ec948211aa20fd47696280f7_7fc20087.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/aistudio/file_00000000ec948211aa20fd47696280f7_7fc20087.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

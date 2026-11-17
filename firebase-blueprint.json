@@ -1,0 +1,592 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Shop owner profile and multi-tenant configuration",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the shop owner",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Owner email address",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "shopName": {
+          "type": "string",
+          "description": "Display name of the mobile shop",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "ownerName": {
+          "type": "string",
+          "description": "Full name of the shop owner",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "phone": {
+          "type": "string",
+          "description": "Shop contact number",
+          "minLength": 0,
+          "maxLength": 20
+        },
+        "city": {
+          "type": "string",
+          "description": "Shop city and address",
+          "minLength": 0,
+          "maxLength": 200
+        },
+        "planStatus": {
+          "type": "string",
+          "description": "Subscription tier status",
+          "enum": ["trial", "pro"],
+          "minLength": 3,
+          "maxLength": 20
+        },
+        "trialDaysLeft": {
+          "type": "number",
+          "description": "Remaining trial days"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp"
+        }
+      },
+      "required": [
+        "uid",
+        "email",
+        "shopName",
+        "ownerName",
+        "planStatus",
+        "trialDaysLeft",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PhoneInventoryItem": {
+      "title": "PhoneInventoryItem",
+      "description": "Used phone inventory record under a specific shop owner",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "stockCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "noImeiDeadPhone": {
+          "type": "boolean"
+        },
+        "imei": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 32
+        },
+        "imei2": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 32
+        },
+        "brand": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "ram": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "storage": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "colour": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 40
+        },
+        "photoFront": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 150000
+        },
+        "photoBack": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 150000
+        },
+        "photoSides": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 150000
+        },
+        "photoScreenOn": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 150000
+        },
+        "accessories": {
+          "type": "array"
+        },
+        "conditionScreen": {
+          "type": "string",
+          "enum": ["OK", "Issue"]
+        },
+        "conditionBody": {
+          "type": "string",
+          "enum": ["OK", "Issue"]
+        },
+        "conditionCamera": {
+          "type": "string",
+          "enum": ["OK", "Issue"]
+        },
+        "conditionBiometrics": {
+          "type": "string",
+          "enum": ["OK", "Issue"]
+        },
+        "conditionCharging": {
+          "type": "string",
+          "enum": ["OK", "Issue"]
+        },
+        "conditionAudio": {
+          "type": "string",
+          "enum": ["OK", "Issue"]
+        },
+        "conditionButtons": {
+          "type": "string",
+          "enum": ["OK", "Issue"]
+        },
+        "batteryHealth": {
+          "type": "number"
+        },
+        "checksPassed": {
+          "type": "number"
+        },
+        "grade": {
+          "type": "string",
+          "enum": ["A", "B", "C", "D"]
+        },
+        "buyingPrice": {
+          "type": "number"
+        },
+        "expectedSellingPrice": {
+          "type": "number"
+        },
+        "actualSellingPrice": {
+          "type": "number"
+        },
+        "expectedProfit": {
+          "type": "number"
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 500
+        },
+        "sellerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "sellerMobile": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 20
+        },
+        "sellerAddress": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "idType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "idMasked": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 30
+        },
+        "paymentMethod": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "paidAmount": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Ready", "Under repair", "Sold"]
+        },
+        "sourceType": {
+          "type": "string",
+          "enum": ["Customer", "Dealer"]
+        },
+        "buyerName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 120
+        },
+        "buyerMobile": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 20
+        },
+        "purchaseDate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "daysInStock": {
+          "type": "number"
+        },
+        "kycId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "stockCode",
+        "noImeiDeadPhone",
+        "imei",
+        "brand",
+        "model",
+        "ram",
+        "storage",
+        "accessories",
+        "conditionScreen",
+        "conditionBody",
+        "conditionCamera",
+        "conditionBiometrics",
+        "conditionCharging",
+        "conditionAudio",
+        "conditionButtons",
+        "batteryHealth",
+        "checksPassed",
+        "grade",
+        "buyingPrice",
+        "expectedSellingPrice",
+        "expectedProfit",
+        "sellerName",
+        "sellerMobile",
+        "sellerAddress",
+        "idType",
+        "idMasked",
+        "paymentMethod",
+        "paidAmount",
+        "status",
+        "sourceType",
+        "purchaseDate",
+        "daysInStock",
+        "kycId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "KycRecord": {
+      "title": "KycRecord",
+      "description": "KYC and Shapath Patra compliance record for police register",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "phoneId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "stockCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "transactionType": {
+          "type": "string",
+          "enum": ["BUY", "SELL"]
+        },
+        "dateLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "brand": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "ram": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "storage": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "imei": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 32
+        },
+        "price": {
+          "type": "number"
+        },
+        "paymentMethod": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "partyName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "partyMobile": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 20
+        },
+        "partyAddress": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "idType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "idLast4": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 4
+        },
+        "idMasked": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 30
+        },
+        "idFrontUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 150000
+        },
+        "idBackUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 150000
+        },
+        "sellerPhotoUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 150000
+        },
+        "signatureDataUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 150000
+        },
+        "shapathLanguage": {
+          "type": "string",
+          "enum": ["Hindi", "English", "Both"]
+        },
+        "idVerified": {
+          "type": "boolean"
+        },
+        "shapathSigned": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "phoneId",
+        "stockCode",
+        "transactionType",
+        "dateLabel",
+        "brand",
+        "model",
+        "ram",
+        "storage",
+        "imei",
+        "price",
+        "paymentMethod",
+        "partyName",
+        "partyMobile",
+        "partyAddress",
+        "idType",
+        "idLast4",
+        "idMasked",
+        "idFrontUrl",
+        "idBackUrl",
+        "sellerPhotoUrl",
+        "signatureDataUrl",
+        "shapathLanguage",
+        "idVerified",
+        "shapathSigned",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "DueRecord": {
+      "title": "DueRecord",
+      "description": "Pending payment due record for customer or dealer transactions",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "partyName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "partyMobile": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 20
+        },
+        "phoneModel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "amount": {
+          "type": "number"
+        },
+        "dueType": {
+          "type": "string",
+          "enum": ["To Receive", "To Pay"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Pending", "Settled"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "partyName",
+        "partyMobile",
+        "phoneModel",
+        "amount",
+        "dueType",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "Shop owner profile document"
+    },
+    "/users/{userId}/inventory/{phoneId}": {
+      "schema": {
+        "$ref": "#/entities/PhoneInventoryItem"
+      },
+      "description": "Multi-tenant isolated phone inventory items"
+    },
+    "/users/{userId}/kyc_records/{kycId}": {
+      "schema": {
+        "$ref": "#/entities/KycRecord"
+      },
+      "description": "Multi-tenant isolated KYC and Shapath Patra records"
+    },
+    "/users/{userId}/dues/{dueId}": {
+      "schema": {
+        "$ref": "#/entities/DueRecord"
+      },
+      "description": "Multi-tenant isolated pending dues records"
+    }
+  }
+}
