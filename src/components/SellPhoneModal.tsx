@@ -1,9 +1,23 @@
 import React, { useState } from 'react';
 import { doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
-import { PhoneInventoryItem, UserProfile } from '../types';
+import {
+  commitFirestoreWrite,
+  db,
+  ensureUserShopProfileInDb,
+  OperationType,
+  upsertLocalDue,
+  upsertLocalKyc,
+  upsertLocalPhone,
+} from '../firebase';
+import {
+  DueRecord,
+  KycRecord,
+  PhoneInventoryItem,
+  UserProfile,
+} from '../types';
 import { maskGovernmentId } from '../utils/imeiDatabase';
 import { generateSaleBillPdf } from '../utils/pdfGenerator';
+import { shareOnWhatsAppApk } from '../utils/apkShareAndPdfEngine';
 import {
   AiExtractedVoiceResult,
   extractPhoneOrBillViaAiVision,
@@ -27,6 +41,11 @@ interface SellPhoneModalProps {
   inventory: PhoneInventoryItem[];
   preselectedPhone?: PhoneInventoryItem | null;
   onClose: () => void;
+  onSaleCompleted?: (
+    updatedPhone: PhoneInventoryItem,
+    saleKyc: KycRecord,
+    saleDue?: DueRecord
+  ) => void;
 }
 
 export const SellPhoneModal: React.FC<SellPhoneModalProps> = ({
@@ -35,6 +54,7 @@ export const SellPhoneModal: React.FC<SellPhoneModalProps> = ({
   inventory,
   preselectedPhone = null,
   onClose,
+  onSaleCompleted,
 }) => {
   const availablePhones = inventory.filter((p) => p.status !== 'Sold');
   const [selectedPhoneId, setSelectedPhoneId] = useState<string>(
@@ -155,21 +175,15 @@ export const SellPhoneModal: React.FC<SellPhoneModalProps> = ({
 
     setSaving(true);
     try {
-      const invDocPath = `users/${userId}/inventory/${selectedPhone.id}`;
-      try {
-        await updateDoc(doc(db, 'users', userId, 'inventory', selectedPhone.id), {
-          status: 'Sold',
-          actualSellingPrice: sellPriceNum,
-          expectedProfit: profitNum,
-          buyerName: buyerName.trim().slice(0, 120),
-          buyerMobile: buyerMobile.replace(/\D/g, '').slice(0, 15),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, invDocPath);
-      }
+      const updatedPhone: PhoneInventoryItem = {
+        ...selectedPhone,
+        status: 'Sold',
+        actualSellingPrice: sellPriceNum,
+        expectedProfit: profitNum,
+        buyerName: buyerName.trim().slice(0, 120),
+        buyerMobile: buyerMobile.replace(/\D/g, '').slice(0, 15),
+      };
 
-      // Log SELL transaction in KYC Register
       const kycId = `kyc_sell_${Date.now()}`;
       const { last4, masked } = maskGovernmentId(
         'Aadhaar',
@@ -180,72 +194,110 @@ export const SellPhoneModal: React.FC<SellPhoneModalProps> = ({
         month: 'short',
       });
 
-      const kycPath = `users/${userId}/kyc_records`;
-      try {
-        await setDoc(doc(db, kycPath, kycId), {
-          id: kycId,
-          userId,
-          phoneId: selectedPhone.id,
-          stockCode: selectedPhone.stockCode,
-          transactionType: 'SELL',
-          dateLabel: nowLabel,
-          brand: selectedPhone.brand,
-          model: selectedPhone.model,
-          ram: selectedPhone.ram,
-          storage: selectedPhone.storage,
-          imei: selectedPhone.imei,
-          price: sellPriceNum,
-          paymentMethod,
-          partyName: buyerName.trim().slice(0, 120),
-          partyMobile: buyerMobile.replace(/\D/g, '').slice(0, 15),
-          partyAddress: buyerAddress.trim().slice(0, 300),
-          idType: 'Aadhaar',
-          idLast4: last4,
-          idMasked: masked,
-          idFrontUrl: '',
-          idBackUrl: '',
-          sellerPhotoUrl: '',
-          signatureDataUrl: '',
-          shapathLanguage: 'Hindi',
-          idVerified: true,
-          shapathSigned: true,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, `${kycPath}/${kycId}`);
-      }
+      const saleKyc: KycRecord = {
+        id: kycId,
+        userId,
+        phoneId: selectedPhone.id,
+        stockCode: selectedPhone.stockCode,
+        transactionType: 'SELL',
+        dateLabel: nowLabel,
+        brand: selectedPhone.brand,
+        model: selectedPhone.model,
+        ram: selectedPhone.ram,
+        storage: selectedPhone.storage,
+        imei: selectedPhone.imei,
+        price: sellPriceNum,
+        paymentMethod,
+        partyName: buyerName.trim().slice(0, 120),
+        partyMobile: buyerMobile.replace(/\D/g, '').slice(0, 15),
+        partyAddress:
+          buyerAddress.trim().slice(0, 300) ||
+          shopProfile.city ||
+          'Local Customer',
+        idType: 'Aadhaar',
+        idLast4: last4,
+        idMasked: masked,
+        idFrontUrl: '',
+        idBackUrl: '',
+        sellerPhotoUrl: '',
+        signatureDataUrl: '',
+        shapathLanguage: 'Hindi',
+        idVerified: true,
+        shapathSigned: true,
+      };
 
-      // If Part Due selected, create a To Receive due
+      let saleDue: DueRecord | undefined;
       const pendingAmt = Math.max(0, parseInt(dueAmount || '0', 10) || 0);
       if (paymentMethod === 'Part Due' && pendingAmt > 0) {
-        const dueId = `due_sale_${Date.now()}`;
-        const duesPath = `users/${userId}/dues`;
-        try {
-          await setDoc(doc(db, duesPath, dueId), {
-            id: dueId,
-            userId,
-            partyName: buyerName.trim().slice(0, 120),
-            partyMobile: buyerMobile.replace(/\D/g, '').slice(0, 15),
-            phoneModel: `${selectedPhone.brand} ${selectedPhone.model}`,
-            amount: pendingAmt,
-            dueType: 'To Receive',
-            status: 'Pending',
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
-        } catch (error) {
-          handleFirestoreError(error, OperationType.CREATE, `${duesPath}/${dueId}`);
-        }
+        saleDue = {
+          id: `due_sale_${Date.now()}`,
+          userId,
+          partyName: buyerName.trim().slice(0, 120),
+          partyMobile: buyerMobile.replace(/\D/g, '').slice(0, 15),
+          phoneModel: `${selectedPhone.brand} ${selectedPhone.model}`,
+          amount: pendingAmt,
+          dueType: 'To Receive',
+          status: 'Pending',
+        };
       }
 
+      // 1. Update local storage & parent state immediately
+      upsertLocalPhone(userId, updatedPhone);
+      upsertLocalKyc(userId, saleKyc);
+      if (saleDue) {
+        upsertLocalDue(userId, saleDue);
+      }
+      onSaleCompleted?.(updatedPhone, saleKyc, saleDue);
+
       setSoldSuccess({
-        phone: selectedPhone,
+        phone: updatedPhone,
         price: sellPriceNum,
         profit: profitNum,
         buyerName: buyerName.trim(),
         buyerMobile: buyerMobile.replace(/\D/g, '').slice(0, 10),
       });
+
+      // 2. Sync to Firestore in background
+      void (async () => {
+        await ensureUserShopProfileInDb(userId, shopProfile);
+        const invDocPath = `users/${userId}/inventory/${selectedPhone.id}`;
+        await commitFirestoreWrite(
+          updateDoc(doc(db, 'users', userId, 'inventory', selectedPhone.id), {
+            status: 'Sold',
+            actualSellingPrice: sellPriceNum,
+            expectedProfit: profitNum,
+            buyerName: updatedPhone.buyerName,
+            buyerMobile: updatedPhone.buyerMobile,
+            updatedAt: serverTimestamp(),
+          }),
+          OperationType.UPDATE,
+          invDocPath
+        );
+
+        const kycPath = `users/${userId}/kyc_records`;
+        await commitFirestoreWrite(
+          setDoc(doc(db, kycPath, kycId), {
+            ...saleKyc,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }),
+          OperationType.CREATE,
+          `${kycPath}/${kycId}`
+        );
+
+        if (saleDue) {
+          const duesPath = `users/${userId}/dues`;
+          await commitFirestoreWrite(
+            setDoc(doc(db, duesPath, saleDue.id), {
+              ...saleDue,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            }),
+            OperationType.CREATE,
+            `${duesPath}/${saleDue.id}`
+          );
+        }
+      })();
     } finally {
       setSaving(false);
     }
@@ -288,14 +340,8 @@ export const SellPhoneModal: React.FC<SellPhoneModalProps> = ({
             <button
               type="button"
               onClick={() => {
-                const msg = `*${shopProfile.shopName} — Sale Bill*\nPhone: ${soldSuccess.phone.brand} ${soldSuccess.phone.model}\nIMEI: ${soldSuccess.phone.imei}\nBuyer: ${soldSuccess.buyerName}\nAmount: ₹${soldSuccess.price.toLocaleString('en-IN')}\nThank you!`;
-                window.open(
-                  `https://wa.me/91${soldSuccess.buyerMobile}?text=${encodeURIComponent(
-                    msg
-                  )}`,
-                  '_blank',
-                  'noopener,noreferrer'
-                );
+                const msg = `*${shopProfile.shopName} — Sale Bill*\nPhone: ${soldSuccess.phone.brand} ${soldSuccess.phone.model} (${soldSuccess.phone.ram}/${soldSuccess.phone.storage})\nIMEI: ${soldSuccess.phone.imei}\nBuyer: ${soldSuccess.buyerName}\nAmount: ₹${soldSuccess.price.toLocaleString('en-IN')}\nThank you!`;
+                void shareOnWhatsAppApk(msg, soldSuccess.buyerMobile);
               }}
               className="h-12 rounded-xl border border-[#D1D5DB] bg-white font-semibold text-xs text-[#111827] flex items-center justify-center gap-2"
             >

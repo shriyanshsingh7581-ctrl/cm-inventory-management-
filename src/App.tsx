@@ -16,7 +16,14 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore';
-import { auth, db, handleFirestoreError, OperationType } from './firebase';
+import {
+  auth,
+  db,
+  handleFirestoreError,
+  loadLocalUserCache,
+  OperationType,
+  saveLocalUserCache,
+} from './firebase';
 import {
   DueRecord,
   KycRecord,
@@ -37,6 +44,7 @@ import { StockView } from './components/StockView';
 import { KycRegisterView } from './components/KycRegisterView';
 import { ImeiScannerModal } from './components/ImeiScannerModal';
 import { ApkVoiceButton } from './components/SmartVoiceModal';
+import { ApkPdfPreviewModal } from './components/ApkPdfPreviewModal';
 import {
   AiExtractedScanResult,
   AiExtractedVoiceResult,
@@ -59,6 +67,7 @@ import {
   IndianRupee,
   LayoutGrid,
   Loader2,
+  MessageCircle,
   MoreHorizontal,
   Receipt,
   Share2,
@@ -144,6 +153,13 @@ export function AppContent() {
       setDues([]);
 
       if (user) {
+        // Hydrate from per-user local cache immediately so stock is visible without waiting for network
+        const cached = loadLocalUserCache(user.uid);
+        if (cached.inventory.length > 0) setInventory(cached.inventory);
+        if (cached.kycRecords.length > 0) setKycRecords(cached.kycRecords);
+        if (cached.dues.length > 0) setDues(cached.dues);
+        if (cached.shopProfile) setShopProfile(cached.shopProfile);
+
         const userDocRef = doc(db, 'users', user.uid);
         const derived = deriveDefaultShopAndOwner(
           user,
@@ -169,10 +185,10 @@ export function AppContent() {
               updatedAt: serverTimestamp(),
             });
             setShopProfile(newProfile);
+            saveLocalUserCache(user.uid, { shopProfile: newProfile });
             pendingShopMetaRef.current = { shopName: '', ownerName: '' };
           } else {
             const existing = snap.data() as UserProfile;
-            // Clean up legacy hardcoded mock profile if it was created by old seed logic
             if (
               existing.shopName === 'Sharma Mobile Point' &&
               existing.phone === '+91 98270 11223'
@@ -194,13 +210,15 @@ export function AppContent() {
                 updatedAt: serverTimestamp(),
               });
               setShopProfile(cleanedProfile);
+              saveLocalUserCache(user.uid, { shopProfile: cleanedProfile });
             } else {
               setShopProfile(existing);
+              saveLocalUserCache(user.uid, { shopProfile: existing });
             }
           }
         } catch (error) {
           console.error('Profile initialization error:', error);
-          setShopProfile({
+          const fallbackProfile: UserProfile = cached.shopProfile || {
             uid: user.uid,
             email: user.email || '',
             shopName: derived.shopName,
@@ -209,7 +227,9 @@ export function AppContent() {
             city: '',
             planStatus: 'trial',
             trialDaysLeft: 12,
-          });
+          };
+          setShopProfile(fallbackProfile);
+          saveLocalUserCache(user.uid, { shopProfile: fallbackProfile });
         }
       } else {
         setShopProfile(null);
@@ -245,7 +265,7 @@ export function AppContent() {
       invQuery,
       (snap) => {
         const legacyPhoneIds: string[] = [];
-        const items: PhoneInventoryItem[] = [];
+        const cloudItemsMap = new Map<string, PhoneInventoryItem>();
 
         snap.docs.forEach((d) => {
           if (isLegacySeededPhoneId(d.id)) {
@@ -253,7 +273,7 @@ export function AppContent() {
           } else {
             const data = d.data() as PhoneInventoryItem;
             if (data.userId === uid) {
-              items.push(data);
+              cloudItemsMap.set(data.id, data);
             }
           }
         });
@@ -262,12 +282,30 @@ export function AppContent() {
           void purgeLegacySeededData(uid, legacyPhoneIds, [], []);
         }
 
+        // Merge with local cache so newly added/edited items never disappear while cloud sync is pending
+        const localCache = loadLocalUserCache(uid);
+        const deletedIds = new Set(localCache.deletedPhoneIds || []);
+        localCache.inventory.forEach((localItem) => {
+          if (
+            localItem.userId === uid &&
+            !deletedIds.has(localItem.id) &&
+            !cloudItemsMap.has(localItem.id)
+          ) {
+            cloudItemsMap.set(localItem.id, localItem);
+          }
+        });
+
+        const items = Array.from(cloudItemsMap.values()).filter(
+          (item) => !deletedIds.has(item.id)
+        );
+
         items.sort((a, b) => {
           if (a.purchaseDate === 'today' && b.purchaseDate !== 'today') return -1;
           if (b.purchaseDate === 'today' && a.purchaseDate !== 'today') return 1;
           return a.daysInStock - b.daysInStock;
         });
         setInventory(items);
+        saveLocalUserCache(uid, { inventory: items });
       },
       (error) => {
         handleFirestoreError(
@@ -286,7 +324,7 @@ export function AppContent() {
       kycQuery,
       (snap) => {
         const legacyKycIds: string[] = [];
-        const records: KycRecord[] = [];
+        const kycMap = new Map<string, KycRecord>();
 
         snap.docs.forEach((d) => {
           if (isLegacySeededKycId(d.id)) {
@@ -294,7 +332,7 @@ export function AppContent() {
           } else {
             const data = d.data() as KycRecord;
             if (data.userId === uid) {
-              records.push(data);
+              kycMap.set(data.id, data);
             }
           }
         });
@@ -303,8 +341,17 @@ export function AppContent() {
           void purgeLegacySeededData(uid, [], legacyKycIds, []);
         }
 
+        const localCache = loadLocalUserCache(uid);
+        localCache.kycRecords.forEach((localKyc) => {
+          if (localKyc.userId === uid && !kycMap.has(localKyc.id)) {
+            kycMap.set(localKyc.id, localKyc);
+          }
+        });
+
+        const records = Array.from(kycMap.values());
         records.sort((a, b) => b.id.localeCompare(a.id));
         setKycRecords(records);
+        saveLocalUserCache(uid, { kycRecords: records });
       },
       (error) => {
         handleFirestoreError(
@@ -323,7 +370,7 @@ export function AppContent() {
       duesQuery,
       (snap) => {
         const legacyDueIds: string[] = [];
-        const records: DueRecord[] = [];
+        const duesMap = new Map<string, DueRecord>();
 
         snap.docs.forEach((d) => {
           if (isLegacySeededDueId(d.id)) {
@@ -331,7 +378,7 @@ export function AppContent() {
           } else {
             const data = d.data() as DueRecord;
             if (data.userId === uid) {
-              records.push(data);
+              duesMap.set(data.id, data);
             }
           }
         });
@@ -340,7 +387,16 @@ export function AppContent() {
           void purgeLegacySeededData(uid, [], [], legacyDueIds);
         }
 
+        const localCache = loadLocalUserCache(uid);
+        localCache.dues.forEach((localDue) => {
+          if (localDue.userId === uid && !duesMap.has(localDue.id)) {
+            duesMap.set(localDue.id, localDue);
+          }
+        });
+
+        const records = Array.from(duesMap.values());
         setDues(records);
+        saveLocalUserCache(uid, { dues: records });
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, `users/${uid}/dues`);
@@ -479,7 +535,7 @@ export function AppContent() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   {/* Universal APK AI Voice Quick Fill */}
                   <ApkVoiceButton
                     context="general"
@@ -497,6 +553,17 @@ export function AppContent() {
                       }
                     }}
                   />
+
+                  {/* Top Menu WhatsApp Quick Share Button */}
+                  <button
+                    type="button"
+                    onClick={() => setShowShareStockModal(true)}
+                    aria-label="Share on WhatsApp"
+                    title="Share on WhatsApp"
+                    className="w-10 h-10 rounded-full bg-[#E8F5EE] hover:bg-[#D1FAE5] flex items-center justify-center text-[#0F7B49] transition-colors"
+                  >
+                    <MessageCircle className="w-5 h-5" />
+                  </button>
 
                   {/* Notification Bell with Red Indicator */}
                   <button
@@ -786,7 +853,7 @@ export function AppContent() {
           )}
 
           {/* ==============================================================
-              STOCK TAB (Exact match to video 00:57)
+              STOCK TAB (Exact match to video 00:57 + Add Product & Edit Stock)
           ============================================================== */}
           {activeTab === 'Stock' && (
             <StockView
@@ -798,6 +865,24 @@ export function AppContent() {
               onSellPhone={(phone) => setSellModalPhone(phone)}
               onShareStock={() => setShowShareStockModal(true)}
               onOpenScannerSearch={() => setShowScannerSearch(true)}
+              onOpenFullBuyWizard={() => setBuyWizardMode('Customer')}
+              onStockAddedOrUpdated={(savedPhone, savedKyc) => {
+                setInventory((prev) => [
+                  savedPhone,
+                  ...prev.filter((item) => item.id !== savedPhone.id),
+                ]);
+                if (savedKyc) {
+                  setKycRecords((prev) => [
+                    savedKyc,
+                    ...prev.filter((k) => k.id !== savedKyc.id),
+                  ]);
+                }
+              }}
+              onStockDeleted={(deletedId) => {
+                setInventory((prev) =>
+                  prev.filter((item) => item.id !== deletedId)
+                );
+              }}
             />
           )}
 
@@ -826,40 +911,75 @@ export function AppContent() {
           )}
 
           {/* ==============================================================
-              BOTTOM NAVIGATION BAR (Home | Stock | Reports | More)
+              BOTTOM NAVIGATION MENU BAR (Home | Stock | WhatsApp | Reports | More)
           ============================================================== */}
-          <nav className="fixed lg:sticky bottom-0 left-0 right-0 z-30 bg-white border-t border-[#E5E7EB] h-16 grid grid-cols-4 items-center">
-            {(
-              [
-                { id: 'Home', label: 'Home', icon: HomeIcon },
-                { id: 'Stock', label: 'Stock', icon: LayoutGrid },
-                { id: 'Reports', label: 'Reports', icon: BarChart3 },
-                { id: 'More', label: 'More', icon: MoreHorizontal },
-              ] as const
-            ).map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => {
-                    if (tab.id === 'Stock') {
-                      setStockInitialFilter('All');
-                    }
-                    setActiveTab(tab.id);
-                  }}
-                  className={`h-full flex flex-col items-center justify-center gap-1 transition-colors ${
-                    isActive
-                      ? 'text-[#0F7B49] font-bold'
-                      : 'text-[#6B7280] hover:text-[#111827] font-medium'
-                  }`}
-                >
-                  <Icon className="w-5 h-5" />
-                  <span className="text-[11px] leading-none">{tab.label}</span>
-                </button>
-              );
-            })}
+          <nav className="fixed lg:sticky bottom-0 left-0 right-0 z-30 bg-white border-t border-[#E5E7EB] h-16 grid grid-cols-5 items-center">
+            <button
+              type="button"
+              onClick={() => setActiveTab('Home')}
+              className={`h-full flex flex-col items-center justify-center gap-1 transition-colors ${
+                activeTab === 'Home'
+                  ? 'text-[#0F7B49] font-bold'
+                  : 'text-[#6B7280] hover:text-[#111827] font-medium'
+              }`}
+            >
+              <HomeIcon className="w-5 h-5" />
+              <span className="text-[11px] leading-none">Home</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setStockInitialFilter('All');
+                setActiveTab('Stock');
+              }}
+              className={`h-full flex flex-col items-center justify-center gap-1 transition-colors ${
+                activeTab === 'Stock'
+                  ? 'text-[#0F7B49] font-bold'
+                  : 'text-[#6B7280] hover:text-[#111827] font-medium'
+              }`}
+            >
+              <LayoutGrid className="w-5 h-5" />
+              <span className="text-[11px] leading-none">Stock</span>
+            </button>
+
+            {/* Integrated Menu Bar WhatsApp Sharing Button (APK & Web) */}
+            <button
+              type="button"
+              onClick={() => setShowShareStockModal(true)}
+              className="h-full flex flex-col items-center justify-center gap-1 text-[#0F7B49] font-bold active:scale-95 transition-transform"
+            >
+              <div className="w-9 h-7 rounded-full bg-[#E8F5EE] border border-[#0F7B49]/30 flex items-center justify-center">
+                <MessageCircle className="w-4 h-4 text-[#0F7B49]" />
+              </div>
+              <span className="text-[10.5px] leading-none">WhatsApp</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('Reports')}
+              className={`h-full flex flex-col items-center justify-center gap-1 transition-colors ${
+                activeTab === 'Reports'
+                  ? 'text-[#0F7B49] font-bold'
+                  : 'text-[#6B7280] hover:text-[#111827] font-medium'
+              }`}
+            >
+              <BarChart3 className="w-5 h-5" />
+              <span className="text-[11px] leading-none">Reports</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('More')}
+              className={`h-full flex flex-col items-center justify-center gap-1 transition-colors ${
+                activeTab === 'More'
+                  ? 'text-[#0F7B49] font-bold'
+                  : 'text-[#6B7280] hover:text-[#111827] font-medium'
+              }`}
+            >
+              <MoreHorizontal className="w-5 h-5" />
+              <span className="text-[11px] leading-none">More</span>
+            </button>
           </nav>
         </div>
 
@@ -1002,8 +1122,21 @@ export function AppContent() {
             setPendingScanForBuy(null);
             setPendingVoiceForBuy(null);
           }}
-          onComplete={() => {
-            // Phone & KYC record are automatically synced via Firestore onSnapshot
+          onComplete={(savedPhone, savedKyc, savedDue) => {
+            setInventory((prev) => [
+              savedPhone,
+              ...prev.filter((item) => item.id !== savedPhone.id),
+            ]);
+            setKycRecords((prev) => [
+              savedKyc,
+              ...prev.filter((k) => k.id !== savedKyc.id),
+            ]);
+            if (savedDue) {
+              setDues((prev) => [
+                savedDue,
+                ...prev.filter((d) => d.id !== savedDue.id),
+              ]);
+            }
           }}
         />
       )}
@@ -1015,6 +1148,21 @@ export function AppContent() {
           inventory={inventory}
           preselectedPhone={sellModalPhone === 'open' ? null : sellModalPhone}
           onClose={() => setSellModalPhone(null)}
+          onSaleCompleted={(updatedPhone, saleKyc, saleDue) => {
+            setInventory((prev) =>
+              prev.map((p) => (p.id === updatedPhone.id ? updatedPhone : p))
+            );
+            setKycRecords((prev) => [
+              saleKyc,
+              ...prev.filter((k) => k.id !== saleKyc.id),
+            ]);
+            if (saleDue) {
+              setDues((prev) => [
+                saleDue,
+                ...prev.filter((d) => d.id !== saleDue.id),
+              ]);
+            }
+          }}
         />
       )}
 
@@ -1032,6 +1180,12 @@ export function AppContent() {
           userId={currentUser.uid}
           dues={dues}
           onClose={() => setShowDuesModal(false)}
+          onDueChanged={(changedDue) => {
+            setDues((prev) => [
+              changedDue,
+              ...prev.filter((d) => d.id !== changedDue.id),
+            ]);
+          }}
         />
       )}
 
@@ -1085,6 +1239,9 @@ export function AppContent() {
           onClose={() => setShowScannerSearch(false)}
         />
       )}
+
+      {/* Global Android Web-APK PDF Preview, Download, Print & WhatsApp Share Modal */}
+      <ApkPdfPreviewModal />
     </div>
   );
 }

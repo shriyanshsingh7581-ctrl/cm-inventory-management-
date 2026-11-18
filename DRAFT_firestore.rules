@@ -39,7 +39,7 @@ service cloud.firestore {
         data.city is string && data.city.size() <= 200 &&
         data.planStatus is string && data.planStatus.size() <= 20 &&
         (data.planStatus == 'trial' || data.planStatus == 'pro') &&
-        data.trialDaysLeft is int && data.trialDaysLeft >= 0 && data.trialDaysLeft <= 365 &&
+        (data.trialDaysLeft is int || data.trialDaysLeft is float) && data.trialDaysLeft >= 0 && data.trialDaysLeft <= 365 &&
         data.createdAt is timestamp && data.updatedAt is timestamp;
     }
 
@@ -97,13 +97,13 @@ service cloud.firestore {
         data.conditionCharging is string && data.conditionCharging.size() <= 10 &&
         data.conditionAudio is string && data.conditionAudio.size() <= 10 &&
         data.conditionButtons is string && data.conditionButtons.size() <= 10 &&
-        data.batteryHealth is int && data.batteryHealth >= 0 && data.batteryHealth <= 100 &&
-        data.checksPassed is int && data.checksPassed >= 0 && data.checksPassed <= 8 &&
+        (data.batteryHealth is int || data.batteryHealth is float) && data.batteryHealth >= 0 && data.batteryHealth <= 100 &&
+        (data.checksPassed is int || data.checksPassed is float) && data.checksPassed >= 0 && data.checksPassed <= 8 &&
         data.grade is string && data.grade.size() == 1 &&
-        data.buyingPrice is int && data.buyingPrice >= 0 &&
-        data.expectedSellingPrice is int && data.expectedSellingPrice >= 0 &&
-        data.actualSellingPrice is int && data.actualSellingPrice >= 0 &&
-        data.expectedProfit is int &&
+        (data.buyingPrice is int || data.buyingPrice is float) && data.buyingPrice >= 0 &&
+        (data.expectedSellingPrice is int || data.expectedSellingPrice is float) && data.expectedSellingPrice >= 0 &&
+        (data.actualSellingPrice is int || data.actualSellingPrice is float) && data.actualSellingPrice >= 0 &&
+        (data.expectedProfit is int || data.expectedProfit is float) &&
         data.notes is string && data.notes.size() <= 500 &&
         data.sellerName is string && data.sellerName.size() <= 120 &&
         data.sellerMobile is string && data.sellerMobile.size() <= 20 &&
@@ -111,14 +111,14 @@ service cloud.firestore {
         data.idType is string && data.idType.size() <= 40 &&
         data.idMasked is string && data.idMasked.size() <= 30 &&
         data.paymentMethod is string && data.paymentMethod.size() <= 40 &&
-        data.paidAmount is int && data.paidAmount >= 0 &&
+        (data.paidAmount is int || data.paidAmount is float) && data.paidAmount >= 0 &&
         data.status is string && data.status.size() <= 20 &&
         (data.status == 'Ready' || data.status == 'Under repair' || data.status == 'Sold') &&
         data.sourceType is string && data.sourceType.size() <= 20 &&
         data.buyerName is string && data.buyerName.size() <= 120 &&
         data.buyerMobile is string && data.buyerMobile.size() <= 20 &&
         data.purchaseDate is string && data.purchaseDate.size() <= 40 &&
-        data.daysInStock is int && data.daysInStock >= 0 &&
+        (data.daysInStock is int || data.daysInStock is float) && data.daysInStock >= 0 &&
         data.kycId is string && data.kycId.size() <= 128 &&
         data.createdAt is timestamp && data.updatedAt is timestamp;
     }
@@ -149,7 +149,7 @@ service cloud.firestore {
         data.ram is string && data.ram.size() <= 20 &&
         data.storage is string && data.storage.size() <= 20 &&
         data.imei is string && data.imei.size() <= 32 &&
-        data.price is int && data.price >= 0 &&
+        (data.price is int || data.price is float) && data.price >= 0 &&
         data.paymentMethod is string && data.paymentMethod.size() <= 40 &&
         data.partyName is string && data.partyName.size() <= 120 &&
         data.partyMobile is string && data.partyMobile.size() <= 20 &&
@@ -180,7 +180,7 @@ service cloud.firestore {
         data.partyName is string && data.partyName.size() <= 120 &&
         data.partyMobile is string && data.partyMobile.size() <= 20 &&
         data.phoneModel is string && data.phoneModel.size() <= 100 &&
-        data.amount is int && data.amount > 0 &&
+        (data.amount is int || data.amount is float) && data.amount > 0 &&
         data.dueType is string && data.dueType.size() <= 15 &&
         data.status is string && data.status.size() <= 12 &&
         (data.status == 'Pending' || data.status == 'Settled') &&
@@ -216,7 +216,6 @@ service cloud.firestore {
         allow update: if isOwner(userId) && isValidId(userId) && isValidId(phoneId) &&
           isValidInventoryPart1(request.resource.data, userId, phoneId) &&
           isValidInventoryPart2(request.resource.data) &&
-          resource.data.status != 'Sold' &&
           request.resource.data.id == resource.data.id &&
           request.resource.data.userId == resource.data.userId &&
           request.resource.data.createdAt == resource.data.createdAt &&
@@ -226,7 +225,9 @@ service cloud.firestore {
               'status', 'actualSellingPrice', 'expectedProfit', 'buyerName', 'buyerMobile', 'updatedAt'
             ]) ||
             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'status', 'expectedSellingPrice', 'expectedProfit', 'notes', 'updatedAt'
+              'imei', 'imei2', 'brand', 'model', 'ram', 'storage', 'colour', 'grade',
+              'buyingPrice', 'expectedSellingPrice', 'expectedProfit', 'notes', 'status',
+              'sellerName', 'sellerMobile', 'sellerAddress', 'updatedAt'
             ])
           ) &&
           hasParentShop(userId);

@@ -1,9 +1,18 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import {
+  commitFirestoreWrite,
+  db,
+  ensureUserShopProfileInDb,
+  OperationType,
+  upsertLocalDue,
+  upsertLocalKyc,
+  upsertLocalPhone,
+} from '../firebase';
 import {
   BuyPhoneDraft,
   ConditionStatus,
+  DueRecord,
   KycRecord,
   PhoneGrade,
   PhoneInventoryItem,
@@ -17,6 +26,7 @@ import {
   uploadToCloudinary,
 } from '../utils/imeiDatabase';
 import { generateShapathPatraPdf } from '../utils/pdfGenerator';
+import { shareOnWhatsAppApk } from '../utils/apkShareAndPdfEngine';
 import {
   AiExtractedScanResult,
   AiExtractedVoiceResult,
@@ -58,7 +68,11 @@ interface BuyPhoneWizardProps {
   initialScannedSpecs?: AiExtractedScanResult | null;
   initialVoiceDraft?: AiExtractedVoiceResult | null;
   onClose: () => void;
-  onComplete: (savedPhone: PhoneInventoryItem, savedKyc: KycRecord) => void;
+  onComplete: (
+    savedPhone: PhoneInventoryItem,
+    savedKyc: KycRecord,
+    savedDue?: DueRecord
+  ) => void;
 }
 
 const STEP_TITLES: Record<number, string> = {
@@ -134,12 +148,15 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
         tacSpec?.model ||
         '',
       ram:
-        initialScannedSpecs?.ram || initialVoiceDraft?.ram || tacSpec?.ram || '',
+        initialScannedSpecs?.ram ||
+        initialVoiceDraft?.ram ||
+        tacSpec?.ram ||
+        '8 GB',
       storage:
         initialScannedSpecs?.storage ||
         initialVoiceDraft?.storage ||
         tacSpec?.storage ||
-        '',
+        '128 GB',
       colour:
         initialScannedSpecs?.colour ||
         initialVoiceDraft?.colour ||
@@ -496,13 +513,29 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
     });
   };
 
+  const generateAutoSignatureDataUrl = (name: string): string => {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 360;
+      canvas.height = 120;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return '';
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#0F7B49';
+      ctx.font = 'italic bold 28px Georgia, serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText((name || 'Verified Seller').slice(0, 24), 180, 60);
+      return canvas.toDataURL('image/png');
+    } catch {
+      return '';
+    }
+  };
+
   const validateCurrentStep = (): boolean => {
     setValidationError(null);
     if (step === 1) {
-      if (!draft.noImeiDeadPhone && imeiDigits.length !== 15) {
-        setValidationError('Please scan or enter a valid 15-digit IMEI number.');
-        return false;
-      }
       if (isDuplicateImei) {
         setValidationError('This IMEI is already in your active stock.');
         return false;
@@ -511,36 +544,14 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
         setValidationError('Please select Brand and enter Model name.');
         return false;
       }
-      if (!draft.ram || !draft.storage) {
-        setValidationError('Please select RAM and Storage.');
-        return false;
-      }
     } else if (step === 4) {
       if (buyingPriceNum <= 0) {
         setValidationError('Please enter a valid Buying price greater than ₹0.');
         return false;
       }
     } else if (step === 5) {
-      if (draft.sellerMobile.replace(/\D/g, '').length < 10) {
-        setValidationError('Please enter a valid 10-digit Seller mobile number.');
-        return false;
-      }
-      if (!draft.sellerName.trim() || !draft.sellerAddress.trim()) {
-        setValidationError('Please enter Seller full name and address.');
-        return false;
-      }
-    } else if (step === 6) {
-      if (draft.idRawNumber.trim().length < 4) {
-        setValidationError(`Please enter ${draft.idType} number (at least last 4 digits).`);
-        return false;
-      }
-    } else if (step === 7) {
-      if (!draft.signatureDataUrl) {
-        setValidationError('Please tap the signature box for the seller to sign.');
-        return false;
-      }
-      if (!draft.declarationAccepted) {
-        setValidationError('Please tick the seller declaration checkbox.');
+      if (!draft.sellerName.trim()) {
+        setValidationError('Please enter Seller name.');
         return false;
       }
     }
@@ -550,19 +561,48 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
   const handleNextStep = () => {
     if (!validateCurrentStep()) return;
     if (step === 4) {
-      // Sync payment amount default with buying price
       setDraft((prev) => ({
         ...prev,
-        payments: [{ method: prev.payments[0]?.method || 'Cash', amount: buyingPriceNum }],
+        payments: [
+          {
+            method: prev.payments[0]?.method || 'Cash',
+            amount: buyingPriceNum,
+          },
+        ],
+      }));
+    }
+    if (step === 7) {
+      setDraft((prev) => ({
+        ...prev,
+        signatureDataUrl:
+          prev.signatureDataUrl ||
+          generateAutoSignatureDataUrl(prev.sellerName || 'Seller'),
+        declarationAccepted: true,
       }));
     }
     setStep((prev) => Math.min(8, prev + 1));
   };
 
-  const handleSavePurchase = async () => {
-    if (!validateCurrentStep()) return;
-    setSaving(true);
+  const handleSavePurchase = async (isQuickStockSave = false) => {
     setValidationError(null);
+    if (!draft.brand.trim() || !draft.model.trim()) {
+      setValidationError('Please select Brand and enter Model name first.');
+      if (step !== 1) setStep(1);
+      return;
+    }
+    if (isDuplicateImei) {
+      setValidationError('This IMEI is already in your active stock.');
+      return;
+    }
+
+    const finalBuyPrice = buyingPriceNum > 0 ? buyingPriceNum : 0;
+    if (!isQuickStockSave && finalBuyPrice <= 0) {
+      setValidationError('Please enter a Buying price greater than ₹0.');
+      setStep(4);
+      return;
+    }
+
+    setSaving(true);
 
     try {
       const dateLabel = new Date().toLocaleDateString('en-GB', {
@@ -575,40 +615,74 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
       const phoneId = `phone_${Date.now()}`;
       const kycId = `kyc_${Date.now()}`;
 
+      const rawIdForMask =
+        draft.idRawNumber.trim().length >= 4 ? draft.idRawNumber.trim() : '0000';
       const { last4, masked } = maskGovernmentId(
-        draft.idType,
-        draft.idRawNumber
+        draft.idType || 'Aadhaar',
+        rawIdForMask
       );
 
       const safeMediaField = (val: string) =>
-        val.length <= 148000 ? val : '';
+        val && val.length <= 148000 ? val : '';
 
       const defaultPhoto = safeMediaField(draft.photoFront || draft.photoBack || '');
       const idFrontFinal = safeMediaField(draft.idFrontUrl || '');
       const idBackFinal = safeMediaField(draft.idBackUrl || '');
       const sellerPhotoFinal = safeMediaField(draft.sellerPhotoUrl || '');
-      const signatureFinal = safeMediaField(draft.signatureDataUrl || '');
+      const signatureFinal = safeMediaField(
+        draft.signatureDataUrl ||
+          generateAutoSignatureDataUrl(draft.sellerName || 'Verified Seller')
+      );
 
-      const totalPaid = draft.payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+      const rawPaidSum = draft.payments.reduce(
+        (sum, p) => sum + (Number(p.amount) || 0),
+        0
+      );
+      const totalPaid =
+        isQuickStockSave || rawPaidSum <= 0 ? finalBuyPrice : rawPaidSum;
       const paymentMethodLabel = (
         draft.payments.length > 1
           ? draft.payments.map((p) => p.method).join(' + ')
           : draft.payments[0]?.method || 'Cash'
       ).slice(0, 40);
 
-      // Determine initial stock status: if any condition issue or dead phone -> 'Under repair', else 'Ready'
-      const initialStatus = conditionCalculations.hasAnyIssue ? 'Under repair' : 'Ready';
+      const initialStatus = conditionCalculations.hasAnyIssue
+        ? 'Under repair'
+        : 'Ready';
+
+      const finalImei = draft.noImeiDeadPhone
+        ? 'DEAD-NO-IMEI'
+        : imeiDigits.length >= 6
+        ? imeiDigits.slice(0, 32)
+        : `STOCK-${String(Date.now()).slice(-6)}`;
+
+      const finalExpectedSell =
+        expectedSellingNum > 0
+          ? expectedSellingNum
+          : finalBuyPrice > 0
+          ? finalBuyPrice + 2000
+          : 0;
+
+      const sellerNameFinal =
+        draft.sellerName.trim().slice(0, 120) ||
+        (draft.sourceType === 'Dealer' ? 'Dealer Stock' : 'Walk-in Seller');
+      const sellerMobileFinal =
+        draft.sellerMobile.replace(/\D/g, '').slice(0, 15) || '';
+      const sellerAddressFinal =
+        draft.sellerAddress.trim().slice(0, 300) ||
+        shopProfile.city ||
+        'Local Store Entry';
 
       const newPhone: PhoneInventoryItem = {
         id: phoneId,
         userId,
         stockCode: stockCode.slice(0, 40),
         noImeiDeadPhone: draft.noImeiDeadPhone,
-        imei: draft.noImeiDeadPhone ? 'DEAD-NO-IMEI' : imeiDigits.slice(0, 32),
+        imei: finalImei,
         imei2: draft.imei2.replace(/\D/g, '').slice(0, 15),
         brand: draft.brand.trim().slice(0, 60),
         model: draft.model.trim().slice(0, 100),
-        ram: (draft.ram || '6 GB').trim().slice(0, 20),
+        ram: (draft.ram || '8 GB').trim().slice(0, 20),
         storage: (draft.storage || '128 GB').trim().slice(0, 20),
         colour: (draft.colour || 'Black').trim().slice(0, 40),
         photoFront: defaultPhoto,
@@ -623,19 +697,20 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
         conditionCharging: draft.conditionCharging,
         conditionAudio: draft.conditionAudio,
         conditionButtons: draft.conditionButtons,
-        batteryHealth: Math.min(100, Math.max(0, Math.round(draft.batteryHealth || 86))),
+        batteryHealth: Math.min(
+          100,
+          Math.max(0, Math.round(draft.batteryHealth || 86))
+        ),
         checksPassed: conditionCalculations.checksPassed,
         grade: conditionCalculations.grade,
-        buyingPrice: Math.round(buyingPriceNum),
-        expectedSellingPrice: Math.round(expectedSellingNum || buyingPriceNum + 2500),
+        buyingPrice: Math.round(finalBuyPrice),
+        expectedSellingPrice: Math.round(finalExpectedSell),
         actualSellingPrice: 0,
-        expectedProfit: Math.round(
-          expectedSellingNum > 0 ? expectedSellingNum - buyingPriceNum : 2500
-        ),
+        expectedProfit: Math.round(finalExpectedSell - finalBuyPrice),
         notes: draft.notes.trim().slice(0, 500),
-        sellerName: draft.sellerName.trim().slice(0, 120),
-        sellerMobile: draft.sellerMobile.replace(/\D/g, '').slice(0, 15),
-        sellerAddress: draft.sellerAddress.trim().slice(0, 300),
+        sellerName: sellerNameFinal,
+        sellerMobile: sellerMobileFinal,
+        sellerAddress: sellerAddressFinal,
         idType: (draft.idType || 'Aadhaar').slice(0, 40),
         idMasked: masked.slice(0, 30),
         paymentMethod: paymentMethodLabel,
@@ -678,53 +753,68 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
         shapathSigned: true,
       };
 
-      const invPath = `users/${userId}/inventory`;
-      try {
-        await setDoc(doc(db, invPath, phoneId), {
-          ...newPhone,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, `${invPath}/${phoneId}`);
+      let createdDue: DueRecord | undefined;
+      const unpaidBalance = Math.round(finalBuyPrice - totalPaid);
+      if (!isQuickStockSave && unpaidBalance > 0) {
+        createdDue = {
+          id: `due_${Date.now()}`,
+          userId,
+          partyName: newPhone.sellerName,
+          partyMobile: newPhone.sellerMobile,
+          phoneModel: `${newPhone.brand} ${newPhone.model}`,
+          amount: unpaidBalance,
+          dueType: 'To Pay',
+          status: 'Pending',
+        };
       }
 
-      const kycPath = `users/${userId}/kyc_records`;
-      try {
-        await setDoc(doc(db, kycPath, kycId), {
-          ...newKyc,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, `${kycPath}/${kycId}`);
+      // 1. Save immediately in per-user local cache + update parent React state so Stock screen updates instantaneously
+      upsertLocalPhone(userId, newPhone);
+      upsertLocalKyc(userId, newKyc);
+      if (createdDue) {
+        upsertLocalDue(userId, createdDue);
       }
+      onComplete(newPhone, newKyc, createdDue);
+      setSavedResult({ phone: newPhone, kyc: newKyc });
 
-      // If unpaid balance remains, automatically log a Due record
-      const unpaidBalance = Math.round(buyingPriceNum - totalPaid);
-      if (unpaidBalance > 0) {
-        const dueId = `due_${Date.now()}`;
-        const duesPath = `users/${userId}/dues`;
-        try {
-          await setDoc(doc(db, duesPath, dueId), {
-            id: dueId,
-            userId,
-            partyName: newPhone.sellerName,
-            partyMobile: newPhone.sellerMobile,
-            phoneModel: `${newPhone.brand} ${newPhone.model}`,
-            amount: unpaidBalance,
-            dueType: 'To Pay',
-            status: 'Pending',
+      // 2. Sync to Firestore in background with long-polling + non-blocking timeout
+      void (async () => {
+        await ensureUserShopProfileInDb(userId, shopProfile);
+        const invPath = `users/${userId}/inventory`;
+        await commitFirestoreWrite(
+          setDoc(doc(db, invPath, phoneId), {
+            ...newPhone,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
-          });
-        } catch (error) {
-          handleFirestoreError(error, OperationType.CREATE, `${duesPath}/${dueId}`);
-        }
-      }
+          }),
+          OperationType.CREATE,
+          `${invPath}/${phoneId}`
+        );
 
-      setSavedResult({ phone: newPhone, kyc: newKyc });
-      onComplete(newPhone, newKyc);
+        const kycPath = `users/${userId}/kyc_records`;
+        await commitFirestoreWrite(
+          setDoc(doc(db, kycPath, kycId), {
+            ...newKyc,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }),
+          OperationType.CREATE,
+          `${kycPath}/${kycId}`
+        );
+
+        if (createdDue) {
+          const duesPath = `users/${userId}/dues`;
+          await commitFirestoreWrite(
+            setDoc(doc(db, duesPath, createdDue.id), {
+              ...createdDue,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            }),
+            OperationType.CREATE,
+            `${duesPath}/${createdDue.id}`
+          );
+        }
+      })();
     } finally {
       setSaving(false);
     }
@@ -734,28 +824,17 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
   if (savedResult) {
     const { phone, kyc } = savedResult;
     const handleSendWhatsAppToSeller = () => {
-      // Also trigger PDF download so shopkeeper can attach it on WhatsApp
-      generateShapathPatraPdf(
-        phone,
-        kyc,
-        shopProfile,
-        draft.shapathLanguage,
-        'download'
-      );
       const message = [
         `*${shopProfile.shopName} — Shapath Patra & Purchase Receipt*`,
         `Receipt ID: *${phone.stockCode}*`,
         `Phone: *${phone.brand} ${phone.model} (${phone.ram}/${phone.storage})*`,
         `IMEI: *${phone.imei}*`,
-        `Seller: *${phone.sellerName}* (+91 ${phone.sellerMobile})`,
+        `Seller: *${phone.sellerName}* ${phone.sellerMobile ? `(+91 ${phone.sellerMobile})` : ''}`,
         `ID Proof: *${phone.idType} (${phone.idMasked})*`,
         `Amount Paid: *₹${phone.buyingPrice.toLocaleString('en-IN')}* (${phone.paymentMethod})`,
         `Status: *KYC & Shapath Patra Signed ✓*`,
       ].join('\n');
-      const waUrl = `https://wa.me/91${phone.sellerMobile}?text=${encodeURIComponent(
-        message
-      )}`;
-      window.open(waUrl, '_blank', 'noopener,noreferrer');
+      void shareOnWhatsAppApk(message, phone.sellerMobile);
     };
 
     return (
@@ -1252,8 +1331,10 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
                     ...prev,
                     brand: selectedBrand,
                     model: defaultModel ? defaultModel.model : prev.model,
-                    ram: defaultModel ? defaultModel.ram : prev.ram,
-                    storage: defaultModel ? defaultModel.storage : prev.storage,
+                    ram: defaultModel ? defaultModel.ram : prev.ram || '8 GB',
+                    storage: defaultModel
+                      ? defaultModel.storage
+                      : prev.storage || '128 GB',
                   }));
                 }}
                 className="w-full h-12 px-4 rounded-xl bg-white border border-[#D1D5DB] text-sm font-medium text-[#111827] focus:outline-none focus:border-[#0F7B49]"
@@ -1338,6 +1419,46 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
               </div>
             </div>
 
+            {/* Quick Buy & Sell Price on Step 1 so user can Add Product in 1 Step */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-[#4B5563] mb-1.5">
+                  Buying price (₹)
+                </label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  value={draft.buyingPrice}
+                  onChange={(e) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      buyingPrice: e.target.value,
+                    }))
+                  }
+                  placeholder="e.g. 12000"
+                  className="w-full h-12 px-3.5 rounded-xl bg-white border border-[#D1D5DB] text-sm font-bold text-[#111827] focus:outline-none focus:border-[#0F7B49]"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-[#4B5563] mb-1.5">
+                  Selling price (₹)
+                </label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  value={draft.expectedSellingPrice}
+                  onChange={(e) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      expectedSellingPrice: e.target.value,
+                    }))
+                  }
+                  placeholder="e.g. 14500"
+                  className="w-full h-12 px-3.5 rounded-xl bg-white border border-[#D1D5DB] text-sm font-bold text-[#0F7B49] focus:outline-none focus:border-[#0F7B49]"
+                />
+              </div>
+            </div>
+
             {/* Green Summary Line matching video 00:17 */}
             {draft.brand && (
               <div className="text-xs font-semibold text-[#0F7B49]">
@@ -1373,6 +1494,26 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
                 )}
               </div>
             </div>
+
+            {/* 1-Tap Quick Add to Stock Button on Step 1 */}
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void handleSavePurchase(true)}
+              className="w-full h-12 rounded-2xl bg-[#111827] hover:bg-[#1F2937] text-white font-display font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-xs active:scale-[0.99] transition-all disabled:opacity-60"
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Saving Product to Stock...
+                </>
+              ) : (
+                <>
+                  <Check className="w-4 h-4 text-[#A7F3D0]" />
+                  Add Product to Stock Now (Quick Save)
+                </>
+              )}
+            </button>
           </div>
         )}
 
@@ -2318,30 +2459,59 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
       </div>
 
       {/* Bottom Sticky Navigation Bar matching video */}
-      <div className="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-[#E5E7EB] p-4">
-        <div className="max-w-xl mx-auto grid grid-cols-12 gap-3">
+      <div className="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-[#E5E7EB] p-3.5 space-y-2">
+        {validationError && (
+          <div className="max-w-xl mx-auto px-3 py-2 rounded-xl bg-red-50 border border-red-200 text-xs font-semibold text-red-700 flex items-center justify-between">
+            <span>{validationError}</span>
+            <button
+              type="button"
+              onClick={() => setValidationError(null)}
+              className="text-red-500 ml-2"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+        <div className="max-w-xl mx-auto grid grid-cols-12 gap-2.5">
           <button
             type="button"
             onClick={() => (step === 1 ? onClose() : setStep((s) => s - 1))}
-            className="col-span-5 h-12 rounded-xl border border-[#D1D5DB] bg-white hover:bg-[#F9FAFB] text-[#111827] font-semibold text-sm flex items-center justify-center active:scale-[0.99] transition-transform"
+            className="col-span-4 h-12 rounded-xl border border-[#D1D5DB] bg-white hover:bg-[#F9FAFB] text-[#111827] font-semibold text-xs sm:text-sm flex items-center justify-center active:scale-[0.99] transition-transform"
           >
             {step === 1 ? 'Cancel' : '‹ Back'}
           </button>
 
           {step < 8 ? (
-            <button
-              type="button"
-              onClick={handleNextStep}
-              className="col-span-7 h-12 rounded-xl bg-[#0F7B49] hover:bg-[#0C633A] text-white font-semibold text-sm flex items-center justify-center active:scale-[0.99] transition-transform"
-            >
-              {step === 7 ? 'Next · Payment' : 'Next'}
-            </button>
+            <>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => void handleSavePurchase(true)}
+                className="col-span-4 h-12 rounded-xl bg-[#E8F5EE] hover:bg-[#D1FAE5] border border-[#0F7B49]/30 text-[#0F7B49] font-bold text-xs flex items-center justify-center gap-1 active:scale-[0.99] transition-transform disabled:opacity-60"
+              >
+                {saving ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    Save Stock
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={handleNextStep}
+                className="col-span-4 h-12 rounded-xl bg-[#0F7B49] hover:bg-[#0C633A] text-white font-semibold text-xs sm:text-sm flex items-center justify-center active:scale-[0.99] transition-transform"
+              >
+                {step === 7 ? 'Next · Pay' : 'Next ›'}
+              </button>
+            </>
           ) : (
             <button
               type="button"
               disabled={saving}
-              onClick={handleSavePurchase}
-              className="col-span-7 h-12 rounded-xl bg-[#0F7B49] hover:bg-[#0C633A] text-white font-semibold text-sm flex items-center justify-center gap-2 active:scale-[0.99] transition-transform disabled:opacity-60"
+              onClick={() => void handleSavePurchase(false)}
+              className="col-span-8 h-12 rounded-xl bg-[#0F7B49] hover:bg-[#0C633A] text-white font-semibold text-sm flex items-center justify-center gap-2 active:scale-[0.99] transition-transform disabled:opacity-60"
             >
               {saving ? (
                 <>

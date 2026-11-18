@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf';
 import { KycRecord, PhoneInventoryItem, ShapathLanguage, UserProfile } from '../types';
+import { deliverPdfInApk } from './apkShareAndPdfEngine';
 
 /**
  * Generates an A4 legally formatted Shapath Patra (Affidavit) PDF combining:
@@ -8,6 +9,7 @@ import { KycRecord, PhoneInventoryItem, ShapathLanguage, UserProfile } from '../
  * - Complete phone specifications, IMEI, condition & grade
  * - Legal Shapath Patra declaration clauses (English / Hindi transliterated & bilingual)
  * - Embedded ID Front/Back photos & Digital Signature
+ * - Full Android Web-APK PDF Download, Native File Share, WhatsApp Share & Print support
  */
 export function generateShapathPatraPdf(
   phone: PhoneInventoryItem,
@@ -131,12 +133,12 @@ export function generateShapathPatraPdf(
   doc.setTextColor(31, 41, 55);
   doc.text('Seller Name:', 18, 111);
   doc.setFont('helvetica', 'normal');
-  doc.text(phone.sellerName, 50, 111);
+  doc.text(phone.sellerName || 'Walk-in Seller', 50, 111);
 
   doc.setFont('helvetica', 'bold');
   doc.text('Mobile No:', 115, 111);
   doc.setFont('helvetica', 'normal');
-  doc.text(`+91 ${phone.sellerMobile}`, 145, 111);
+  doc.text(phone.sellerMobile ? `+91 ${phone.sellerMobile}` : 'N/A', 145, 111);
 
   doc.setFont('helvetica', 'bold');
   doc.text('ID Proof Type:', 18, 118);
@@ -151,7 +153,7 @@ export function generateShapathPatraPdf(
   doc.setFont('helvetica', 'bold');
   doc.text('Full Address:', 18, 125);
   doc.setFont('helvetica', 'normal');
-  doc.text(phone.sellerAddress.slice(0, 85), 50, 125);
+  doc.text((phone.sellerAddress || 'Local Address Verified').slice(0, 85), 50, 125);
 
   // Section 3: Shapath Patra Legal Clauses
   doc.setFont('helvetica', 'bold');
@@ -163,16 +165,17 @@ export function generateShapathPatraPdf(
   doc.setFontSize(9);
   doc.setTextColor(31, 41, 55);
 
+  const sellerDisplay = phone.sellerName || 'Seller';
   const clausesHindi = [
-    `1. Main, ${phone.sellerName}, shapath purvak ghoshna karta/karti hoon ki upar likha mobile (${phone.brand} ${phone.model}, IMEI: ${phone.imei}) mera swayam ka hai.`,
+    `1. Main, ${sellerDisplay}, shapath purvak ghoshna karta/karti hoon ki upar likha mobile (${phone.brand} ${phone.model}, IMEI: ${phone.imei}) mera swayam ka hai.`,
     `2. Maine yah mobile ${shop.shopName} ko Rs. ${phone.buyingPrice.toLocaleString('en-IN')}/- (${phone.paymentMethod}) mein apni marzi se becha hai aur poori rashi prapt kar li hai.`,
     `3. Yah mobile chori ka nahi hai, na hi is par koi EMI / Finance baki hai, aur na hi kisi police prakaran mein shamil hai.`,
-    `4. Bechnay ki tarikh se pehle agar is IMEI / mobile se koi bhi kanooni vivad ya cyber crime juda paya jata hai, toh uski sampurn jimmedari meri (${phone.sellerName}) hogi.`,
+    `4. Bechnay ki tarikh se pehle agar is IMEI / mobile se koi bhi kanooni vivad ya cyber crime juda paya jata hai, toh uski sampurn jimmedari meri (${sellerDisplay}) hogi.`,
     `5. Maine apna asli pehchan patra (${phone.idType}: ${phone.idMasked}) jama kiya hai aur neeche apne hastakshar kiye hain.`,
   ];
 
   const clausesEnglish = [
-    `1. I, ${phone.sellerName}, solemnly declare that the mobile phone (${phone.brand} ${phone.model}, IMEI: ${phone.imei}) is my rightful legal property.`,
+    `1. I, ${sellerDisplay}, solemnly declare that the mobile phone (${phone.brand} ${phone.model}, IMEI: ${phone.imei}) is my rightful legal property.`,
     `2. I have willingly sold this mobile phone to ${shop.shopName} for Rs. ${phone.buyingPrice.toLocaleString('en-IN')}/- via ${phone.paymentMethod} and received full payment.`,
     `3. This device is NOT stolen, has NO pending finance/loan/EMI lock, and is not involved in any unlawful activity.`,
     `4. I shall bear sole legal responsibility for any prior dispute, complaint, or issue associated with this IMEI prior to the date and time of this sale.`,
@@ -203,7 +206,6 @@ export function generateShapathPatraPdf(
   doc.setTextColor(15, 123, 73);
   doc.text('4. ATTACHED KYC ID PROOF & DIGITAL SIGNATURE', 15, mediaBoxY + 3);
 
-  // Add ID Front Photo if available
   try {
     if (kyc.idFrontUrl && kyc.idFrontUrl.startsWith('data:image')) {
       doc.addImage(kyc.idFrontUrl, 'JPEG', 15, mediaBoxY + 7, 52, 32);
@@ -219,7 +221,6 @@ export function generateShapathPatraPdf(
   doc.setTextColor(75, 85, 99);
   doc.text(`ID Front (${phone.idMasked})`, 15, mediaBoxY + 43);
 
-  // Add ID Back Photo if available
   try {
     if (kyc.idBackUrl && kyc.idBackUrl.startsWith('data:image')) {
       doc.addImage(kyc.idBackUrl, 'JPEG', 73, mediaBoxY + 7, 52, 32);
@@ -233,7 +234,6 @@ export function generateShapathPatraPdf(
   }
   doc.text('ID Back (Address Verified)', 73, mediaBoxY + 43);
 
-  // Add Seller Digital Signature
   doc.rect(133, mediaBoxY + 7, 62, 32);
   try {
     if (kyc.signatureDataUrl && kyc.signatureDataUrl.startsWith('data:image')) {
@@ -244,7 +244,7 @@ export function generateShapathPatraPdf(
   }
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(17, 24, 39);
-  doc.text(`Seller Sign: ${phone.sellerName}`, 133, mediaBoxY + 43);
+  doc.text(`Seller Sign: ${sellerDisplay}`, 133, mediaBoxY + 43);
 
   // Bottom Shop Stamp & Footer
   doc.setDrawColor(229, 231, 235);
@@ -257,19 +257,39 @@ export function generateShapathPatraPdf(
   doc.setTextColor(15, 123, 73);
   doc.text(`Authorized Signatory — ${shop.shopName}`, 195, 272, { align: 'right' });
 
-  const fileName = `Shapath_Patra_${phone.stockCode}_${phone.sellerName.replace(/\s+/g, '_')}.pdf`;
+  const fileName = `Shapath_Patra_${phone.stockCode}_${sellerDisplay.replace(/\s+/g, '_')}.pdf`;
+  const summaryText = [
+    `*${shop.shopName} — Shapath Patra & Purchase Receipt*`,
+    `Receipt ID: *${phone.stockCode}*`,
+    `Phone: *${phone.brand} ${phone.model} (${phone.ram}/${phone.storage})*`,
+    `IMEI: *${phone.imei}*`,
+    `Seller: *${sellerDisplay}* ${phone.sellerMobile ? `(+91 ${phone.sellerMobile})` : ''}`,
+    `ID Proof: *${phone.idType} (${phone.idMasked})*`,
+    `Amount Paid: *₹${phone.buyingPrice.toLocaleString('en-IN')}* (${phone.paymentMethod})`,
+    `Status: *KYC & Shapath Patra Verified ✓*`,
+  ].join('\n');
 
-  if (mode === 'print') {
-    doc.autoPrint();
-    const blobUrl = doc.output('bloburl');
-    window.open(blobUrl, '_blank');
-  } else {
-    doc.save(fileName);
-  }
+  deliverPdfInApk(doc, {
+    fileName,
+    title: `Shapath Patra · ${phone.brand} ${phone.model}`,
+    mode,
+    summaryText,
+    whatsappPhone: phone.sellerMobile,
+    htmlPreviewLines: [
+      { label: 'Shop Name', value: shop.shopName || 'CM Inventory Management' },
+      { label: 'Receipt / Stock ID', value: phone.stockCode },
+      { label: 'Phone Model', value: `${phone.brand} ${phone.model} (${phone.ram}/${phone.storage})` },
+      { label: 'IMEI Number', value: phone.imei },
+      { label: 'Buying Price', value: `₹${phone.buyingPrice.toLocaleString('en-IN')} (${phone.paymentMethod})` },
+      { label: 'Seller Name & Mobile', value: `${sellerDisplay} ${phone.sellerMobile ? `(+91 ${phone.sellerMobile})` : ''}` },
+      { label: 'ID Proof', value: `${phone.idType} (${phone.idMasked})` },
+      { label: 'Condition Grade', value: `Grade ${phone.grade} (${phone.checksPassed}/8 Checks OK)` },
+    ],
+  });
 }
 
 /**
- * Generates and downloads the complete KYC Register PDF in one click
+ * Generates and downloads/shares the complete KYC Register PDF in one click
  */
 export function generateKycRegisterPdf(
   records: KycRecord[],
@@ -371,13 +391,31 @@ export function generateKycRegisterPdf(
     { align: 'center' }
   );
 
-  if (mode === 'print') {
-    doc.autoPrint();
-    const blobUrl = doc.output('bloburl');
-    window.open(blobUrl, '_blank');
-  } else {
-    doc.save(`KYC_Register_${(shop.shopName || 'Shop').replace(/\s+/g, '_')}.pdf`);
-  }
+  const fileName = `KYC_Register_${(shop.shopName || 'Shop').replace(/\s+/g, '_')}.pdf`;
+  const summaryText = [
+    `*${shop.shopName} — Official Police KYC Register*`,
+    `Date: ${periodLabel}`,
+    `Total Verified Records: ${records.length}`,
+    ...records
+      .slice(0, 10)
+      .map(
+        (r, i) =>
+          `${i + 1}. ${r.brand} ${r.model} (IMEI: ${r.imei}) — ${r.partyName} — ₹${r.price.toLocaleString('en-IN')}`
+      ),
+  ].join('\n');
+
+  deliverPdfInApk(doc, {
+    fileName,
+    title: `Official KYC Register (${records.length} Records)`,
+    mode,
+    summaryText,
+    htmlPreviewLines: [
+      { label: 'Shop Name', value: shop.shopName || 'CM Inventory Management' },
+      { label: 'Period', value: periodLabel },
+      { label: 'Total Verified KYC Entries', value: `${records.length} Records` },
+      { label: 'Compliance Status', value: '100% Aadhaar / ID Masked & Signed' },
+    ],
+  });
 }
 
 /**
@@ -389,7 +427,8 @@ export function generateSaleBillPdf(
   buyerName: string,
   buyerMobile: string,
   sellingPrice: number,
-  paymentMethod: string
+  paymentMethod: string,
+  mode: 'download' | 'print' = 'download'
 ): void {
   const doc = new jsPDF({
     orientation: 'portrait',
@@ -431,5 +470,134 @@ export function generateSaleBillPdf(
   doc.setTextColor(107, 114, 128);
   doc.text('Thank you for purchasing from our verified pre-owned mobile store.', 18, 145);
 
-  doc.save(`Sale_Bill_${phone.stockCode}_${buyerName.replace(/\s+/g, '_')}.pdf`);
+  const fileName = `Sale_Bill_${phone.stockCode}_${buyerName.replace(/\s+/g, '_')}.pdf`;
+  const summaryText = [
+    `*${shop.shopName} — Customer Sale Bill*`,
+    `Bill No: *${phone.stockCode}*`,
+    `Phone: *${phone.brand} ${phone.model} (${phone.ram}/${phone.storage})*`,
+    `IMEI: *${phone.imei}*`,
+    `Buyer: *${buyerName}* (+91 ${buyerMobile})`,
+    `Total Paid: *₹${sellingPrice.toLocaleString('en-IN')}* (${paymentMethod})`,
+    `Thank you for shopping with ${shop.shopName}!`,
+  ].join('\n');
+
+  deliverPdfInApk(doc, {
+    fileName,
+    title: `Sale Bill · ${phone.brand} ${phone.model}`,
+    mode,
+    summaryText,
+    whatsappPhone: buyerMobile,
+    htmlPreviewLines: [
+      { label: 'Shop Name', value: shop.shopName || 'CM Inventory Management' },
+      { label: 'Bill / Stock No', value: phone.stockCode },
+      { label: 'Buyer Name & Mobile', value: `${buyerName} (+91 ${buyerMobile})` },
+      { label: 'Phone Model', value: `${phone.brand} ${phone.model} (${phone.ram}/${phone.storage})` },
+      { label: 'IMEI Number', value: phone.imei },
+      { label: 'Total Amount Paid', value: `₹${sellingPrice.toLocaleString('en-IN')} (${paymentMethod})` },
+    ],
+  });
+}
+
+/**
+ * Generates a Ready Stock Catalog PDF for WhatsApp & Dealer sharing in APK
+ */
+export function generateStockCatalogPdf(
+  inventory: PhoneInventoryItem[],
+  shop: UserProfile,
+  mode: 'download' | 'print' = 'download'
+): void {
+  const readyPhones = inventory.filter((p) => p.status !== 'Sold');
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  doc.setFillColor(15, 123, 73);
+  doc.rect(10, 10, 190, 22, 'F');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(15);
+  doc.setTextColor(255, 255, 255);
+  doc.text(`${shop.shopName || 'CM Inventory Management'} — LIVE STOCK CATALOG`, 15, 20);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9.5);
+  doc.text(
+    `Available Phones: ${readyPhones.length}   |   Contact: ${shop.phone || shop.email || 'Verified Store'}`,
+    15,
+    27
+  );
+
+  let y = 40;
+  doc.setFillColor(243, 244, 246);
+  doc.rect(10, y - 5, 190, 8, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(55, 65, 81);
+  doc.text('#', 13, y);
+  doc.text('BRAND & MODEL', 24, y);
+  doc.text('RAM / ROM', 88, y);
+  doc.text('GRADE', 120, y);
+  doc.text('STATUS', 142, y);
+  doc.text('PRICE (Rs.)', 196, y, { align: 'right' });
+
+  y += 7;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+
+  if (readyPhones.length === 0) {
+    doc.setTextColor(107, 114, 128);
+    doc.text('No active phones in stock right now.', 105, y + 6, { align: 'center' });
+  }
+
+  readyPhones.forEach((p, idx) => {
+    if (y > 272) {
+      doc.addPage();
+      y = 20;
+    }
+    if (idx % 2 === 1) {
+      doc.setFillColor(249, 250, 251);
+      doc.rect(10, y - 4.5, 190, 7.5, 'F');
+    }
+    doc.setTextColor(17, 24, 39);
+    doc.text(String(idx + 1), 13, y);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`${p.brand} ${p.model}`.slice(0, 30), 24, y);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`${p.ram}/${p.storage}`, 88, y);
+    doc.text(`Grade ${p.grade}`, 120, y);
+    doc.text(p.status, 142, y);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(15, 123, 73);
+    doc.text(
+      `Rs.${(p.expectedSellingPrice || p.buyingPrice).toLocaleString('en-IN')}`,
+      196,
+      y,
+      { align: 'right' }
+    );
+    y += 7.5;
+  });
+
+  const fileName = `Stock_Catalog_${(shop.shopName || 'Shop').replace(/\s+/g, '_')}.pdf`;
+  const summaryText =
+    readyPhones.length === 0
+      ? `📱 *${shop.shopName}*\nNo ready phones in stock right now.`
+      : [
+          `📱 *${shop.shopName} — Available Mobile Stock (${readyPhones.length} Phones)*`,
+          `--------------------------------`,
+          ...readyPhones.map(
+            (p, i) =>
+              `${i + 1}. *${p.brand} ${p.model}* (${p.ram}/${p.storage}) · Grade ${p.grade} — *₹${(p.expectedSellingPrice || p.buyingPrice).toLocaleString('en-IN')}*`
+          ),
+          `--------------------------------`,
+          `✅ 100% KYC Verified Phones`,
+        ].join('\n');
+
+  deliverPdfInApk(doc, {
+    fileName,
+    title: `Live Stock Catalog (${readyPhones.length} Phones)`,
+    mode,
+    summaryText,
+  });
 }

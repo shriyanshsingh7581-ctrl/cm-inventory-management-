@@ -4,12 +4,13 @@ import {
   generateKycRegisterPdf,
   generateShapathPatraPdf,
 } from '../utils/pdfGenerator';
+import { shareOnWhatsAppApk } from '../utils/apkShareAndPdfEngine';
 import {
   ArrowLeft,
   Download,
   FileText,
+  MessageCircle,
   Printer,
-  Share2,
   ShieldCheck,
   X,
 } from 'lucide-react';
@@ -87,8 +88,7 @@ export const KycRegisterView: React.FC<KycRegisterViewProps> = ({
         ),
     ].join('\n');
 
-    const waUrl = `https://wa.me/?text=${encodeURIComponent(summaryText)}`;
-    window.open(waUrl, '_blank', 'noopener,noreferrer');
+    void shareOnWhatsAppApk(summaryText);
   };
 
   return (
@@ -231,8 +231,8 @@ export const KycRegisterView: React.FC<KycRegisterViewProps> = ({
             onClick={handleShareRegister}
             className="h-12 rounded-xl border border-[#D1D5DB] bg-white hover:bg-[#F9FAFB] text-[#111827] font-semibold text-sm flex items-center justify-center gap-2 active:scale-[0.99]"
           >
-            <Share2 className="w-4 h-4 text-[#374151]" />
-            Share
+            <MessageCircle className="w-4 h-4 text-[#0F7B49]" />
+            WhatsApp
           </button>
           <button
             type="button"

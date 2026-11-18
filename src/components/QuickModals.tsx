@@ -1,14 +1,28 @@
 import React, { useState } from 'react';
 import { doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
-import { auth, db, handleFirestoreError, OperationType } from '../firebase';
+import {
+  auth,
+  commitFirestoreWrite,
+  db,
+  OperationType,
+  saveLocalUserCache,
+  upsertLocalDue,
+} from '../firebase';
 import {
   DueRecord,
   KycRecord,
   PhoneInventoryItem,
   UserProfile,
 } from '../types';
-import { generateKycRegisterPdf } from '../utils/pdfGenerator';
+import {
+  generateKycRegisterPdf,
+  generateStockCatalogPdf,
+} from '../utils/pdfGenerator';
+import {
+  copyTextSafe,
+  shareOnWhatsAppApk,
+} from '../utils/apkShareAndPdfEngine';
 import { ApkVoiceButton } from './SmartVoiceModal';
 import {
   Bell,
@@ -16,13 +30,13 @@ import {
   Copy,
   Crown,
   Download,
+  FileText,
   IndianRupee,
   Loader2,
   LogOut,
   MessageCircle,
   PlayCircle,
   Plus,
-  Share2,
   ShieldCheck,
   Store,
   TrendingUp,
@@ -37,12 +51,14 @@ interface DuesModalProps {
   userId: string;
   dues: DueRecord[];
   onClose: () => void;
+  onDueChanged?: (due: DueRecord) => void;
 }
 
 export const DuesModal: React.FC<DuesModalProps> = ({
   userId,
   dues,
   onClose,
+  onDueChanged,
 }) => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [partyName, setPartyName] = useState('');
@@ -62,43 +78,56 @@ export const DuesModal: React.FC<DuesModalProps> = ({
 
     setSaving(true);
     const dueId = `due_${Date.now()}`;
-    const path = `users/${userId}/dues`;
+    const newDue: DueRecord = {
+      id: dueId,
+      userId,
+      partyName: partyName.trim().slice(0, 120),
+      partyMobile: partyMobile.replace(/\D/g, '').slice(0, 15),
+      phoneModel: phoneModel.trim().slice(0, 100) || 'Phone Transaction',
+      amount: amt,
+      dueType,
+      status: 'Pending',
+    };
+
     try {
-      await setDoc(doc(db, path, dueId), {
-        id: dueId,
-        userId,
-        partyName: partyName.trim().slice(0, 120),
-        partyMobile: partyMobile.replace(/\D/g, '').slice(0, 15),
-        phoneModel: phoneModel.trim().slice(0, 100) || 'Phone Transaction',
-        amount: amt,
-        dueType,
-        status: 'Pending',
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
+      upsertLocalDue(userId, newDue);
+      onDueChanged?.(newDue);
       setPartyName('');
       setPartyMobile('');
       setPhoneModel('');
       setAmount('');
       setShowAddForm(false);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, `${path}/${dueId}`);
+
+      const path = `users/${userId}/dues`;
+      void commitFirestoreWrite(
+        setDoc(doc(db, path, dueId), {
+          ...newDue,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        }),
+        OperationType.CREATE,
+        `${path}/${dueId}`
+      );
     } finally {
       setSaving(false);
     }
   };
 
   const handleSettleDue = async (due: DueRecord) => {
+    const updatedDue: DueRecord = { ...due, status: 'Settled' };
+    upsertLocalDue(userId, updatedDue);
+    onDueChanged?.(updatedDue);
+
     const path = `users/${userId}/dues/${due.id}`;
-    try {
-      await updateDoc(doc(db, 'users', userId, 'dues', due.id), {
+    await commitFirestoreWrite(
+      updateDoc(doc(db, 'users', userId, 'dues', due.id), {
         status: 'Settled',
         amount: due.amount,
         updatedAt: serverTimestamp(),
-      });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, path);
-    }
+      }),
+      OperationType.UPDATE,
+      path
+    );
   };
 
   return (
@@ -274,14 +303,8 @@ export const DuesModal: React.FC<DuesModalProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        const text = `Namaste ${due.partyName}, friendly reminder for pending balance of ₹${due.amount.toLocaleString('en-IN')} for ${due.phoneModel}.`;
-                        window.open(
-                          `https://wa.me/91${due.partyMobile}?text=${encodeURIComponent(
-                            text
-                          )}`,
-                          '_blank',
-                          'noopener,noreferrer'
-                        );
+                        const text = `Namaste ${due.partyName}, friendly reminder from our shop for pending balance of ₹${due.amount.toLocaleString('en-IN')} for ${due.phoneModel}.`;
+                        void shareOnWhatsAppApk(text, due.partyMobile);
                       }}
                       className="h-9 px-2.5 rounded-xl border border-[#D1D5DB] text-xs font-semibold text-[#0F7B49] flex items-center gap-1"
                     >
@@ -326,7 +349,10 @@ export const ShareStockModal: React.FC<ShareStockModalProps> = ({
   onClose,
 }) => {
   const [copied, setCopied] = useState(false);
+  const [recipientMobile, setRecipientMobile] = useState('');
+  const activePhones = inventory.filter((p) => p.status !== 'Sold');
   const readyPhones = inventory.filter((p) => p.status === 'Ready');
+  const listToShare = readyPhones.length > 0 ? readyPhones : activePhones;
 
   const catalogLocationParts = [
     shopProfile.city ? `📍 ${shopProfile.city}` : null,
@@ -334,50 +360,46 @@ export const ShareStockModal: React.FC<ShareStockModalProps> = ({
   ].filter(Boolean);
 
   const catalogText =
-    readyPhones.length === 0
-      ? `📱 *${shopProfile.shopName}*\nNo ready phones in stock right now. Check back soon!`
+    listToShare.length === 0
+      ? `📱 *${shopProfile.shopName}*\nNew mobile stock arriving today! Contact us for best pre-owned deals.`
       : [
-          `📱 *${shopProfile.shopName} — Ready Pre-Owned Phones*`,
+          `📱 *${shopProfile.shopName} — Available Pre-Owned Phones (${listToShare.length})*`,
           ...(catalogLocationParts.length > 0
             ? [catalogLocationParts.join(' | ')]
             : []),
           `--------------------------------`,
-          ...readyPhones.map(
+          ...listToShare.map(
             (p, i) =>
-              `${i + 1}. *${p.brand} ${p.model}* (${p.ram}/${p.storage}) — Grade ${p.grade} — *₹${p.expectedSellingPrice.toLocaleString('en-IN')}*`
+              `${i + 1}. *${p.brand} ${p.model}* (${p.ram}/${p.storage}) — Grade ${p.grade} — *₹${(p.expectedSellingPrice || p.buyingPrice).toLocaleString('en-IN')}*`
           ),
           `--------------------------------`,
           `✅ 100% KYC Verified Phones with Bill & Box`,
         ].join('\n');
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(catalogText);
+  const handleCopy = async () => {
+    await copyTextSafe(catalogText);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   const handleWhatsAppShare = () => {
-    window.open(
-      `https://wa.me/?text=${encodeURIComponent(catalogText)}`,
-      '_blank',
-      'noopener,noreferrer'
-    );
+    void shareOnWhatsAppApk(catalogText, recipientMobile);
   };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl p-5 space-y-4 shadow-2xl animate-sheet-up">
+      <div className="w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl p-5 space-y-4 shadow-2xl animate-sheet-up max-h-[90dvh] overflow-y-auto touch-pan-y no-scrollbar">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-[#E8F5EE] text-[#0F7B49] flex items-center justify-center">
-              <Share2 className="w-5 h-5" />
+              <MessageCircle className="w-5 h-5" />
             </div>
             <div>
               <h3 className="font-display font-bold text-base text-[#111827]">
-                Share Ready Stock ({readyPhones.length} Phones)
+                WhatsApp Share &amp; PDF Catalog
               </h3>
               <p className="text-xs text-[#6B7280]">
-                Send live catalog to customers or dealer groups
+                {listToShare.length} phones ready · APK &amp; Web compatible
               </p>
             </div>
           </div>
@@ -390,15 +412,57 @@ export const ShareStockModal: React.FC<ShareStockModalProps> = ({
           </button>
         </div>
 
-        <pre className="p-3.5 rounded-2xl bg-[#F6F7F8] border border-[#E5E7EB] text-xs font-sans whitespace-pre-wrap text-[#1F2937] max-h-60 overflow-y-auto no-scrollbar">
+        {/* Optional Customer / Dealer WhatsApp Number */}
+        <div>
+          <label className="block text-xs font-medium text-[#4B5563] mb-1">
+            Customer / Dealer WhatsApp Number (Optional)
+          </label>
+          <div className="relative flex items-center">
+            <span className="absolute left-3.5 text-xs font-bold text-[#6B7280]">
+              +91
+            </span>
+            <input
+              type="tel"
+              maxLength={10}
+              value={recipientMobile}
+              onChange={(e) =>
+                setRecipientMobile(e.target.value.replace(/\D/g, '').slice(0, 10))
+              }
+              placeholder="Leave blank to pick any WhatsApp group/contact"
+              className="w-full h-11 pl-11 pr-3 rounded-xl bg-[#F9FAFB] border border-[#D1D5DB] text-xs font-semibold text-[#111827] focus:outline-none focus:bg-white focus:border-[#0F7B49]"
+            />
+          </div>
+        </div>
+
+        <pre className="p-3.5 rounded-2xl bg-[#F6F7F8] border border-[#E5E7EB] text-xs font-sans whitespace-pre-wrap text-[#1F2937] max-h-52 overflow-y-auto no-scrollbar">
           {catalogText}
         </pre>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-2.5">
           <button
             type="button"
-            onClick={handleCopy}
-            className="h-12 rounded-xl border border-[#D1D5DB] font-semibold text-xs text-[#111827] flex items-center justify-center gap-2"
+            onClick={handleWhatsAppShare}
+            className="col-span-2 h-12 rounded-xl bg-[#0F7B49] hover:bg-[#0C633A] text-white font-display font-bold text-sm flex items-center justify-center gap-2 shadow-xs active:scale-[0.99]"
+          >
+            <MessageCircle className="w-4 h-4" />
+            Share Stock on WhatsApp
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              generateStockCatalogPdf(inventory, shopProfile, 'download')
+            }
+            className="h-11 rounded-xl border border-[#D1D5DB] bg-white hover:bg-[#F9FAFB] font-semibold text-xs text-[#111827] flex items-center justify-center gap-1.5"
+          >
+            <FileText className="w-4 h-4 text-[#0F7B49]" />
+            Download Stock PDF
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void handleCopy()}
+            className="h-11 rounded-xl border border-[#D1D5DB] bg-white hover:bg-[#F9FAFB] font-semibold text-xs text-[#111827] flex items-center justify-center gap-1.5"
           >
             {copied ? (
               <>
@@ -408,17 +472,9 @@ export const ShareStockModal: React.FC<ShareStockModalProps> = ({
             ) : (
               <>
                 <Copy className="w-4 h-4" />
-                Copy List
+                Copy Catalog Text
               </>
             )}
-          </button>
-          <button
-            type="button"
-            onClick={handleWhatsAppShare}
-            className="h-12 rounded-xl bg-[#0F7B49] text-white font-semibold text-xs flex items-center justify-center gap-2"
-          >
-            <MessageCircle className="w-4 h-4" />
-            Share on WhatsApp
           </button>
         </div>
       </div>
@@ -446,14 +502,19 @@ export const ProPlanModal: React.FC<ProPlanModalProps> = ({
     setActivating(true);
     const path = `users/${userId}`;
     try {
-      await updateDoc(doc(db, 'users', userId), {
-        planStatus: 'pro',
-        trialDaysLeft: 365,
-        updatedAt: serverTimestamp(),
+      saveLocalUserCache(userId, {
+        shopProfile: { ...shopProfile, planStatus: 'pro', trialDaysLeft: 365 },
       });
+      await commitFirestoreWrite(
+        updateDoc(doc(db, 'users', userId), {
+          planStatus: 'pro',
+          trialDaysLeft: 365,
+          updatedAt: serverTimestamp(),
+        }),
+        OperationType.UPDATE,
+        path
+      );
       onClose();
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, path);
     } finally {
       setActivating(false);
     }
@@ -674,7 +735,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   return (
     <div className="p-4 space-y-4 pb-24">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <div>
           <h1 className="font-display font-bold text-2xl text-[#111827]">
             Reports &amp; P&amp;L
@@ -683,25 +744,44 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             Real-time financial &amp; inventory summary for {shopProfile.shopName}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() =>
-            generateKycRegisterPdf(
-              kycRecords,
-              shopProfile,
-              new Date().toLocaleDateString('en-IN', {
-                day: '2-digit',
-                month: 'short',
-                year: 'numeric',
-              }),
-              'download'
-            )
-          }
-          className="h-10 px-3.5 rounded-xl bg-[#0F7B49] text-white text-xs font-semibold flex items-center gap-1.5"
-        >
-          <Download className="w-4 h-4" />
-          Export PDF
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              const reportMsg = [
+                `📊 *${shopProfile.shopName} — Daily P&L Report*`,
+                `Realized Net Profit: *₹${totalRealizedProfit.toLocaleString('en-IN')}* (${soldPhones.length} sold)`,
+                `Total Sales Revenue: *₹${totalSalesAmount.toLocaleString('en-IN')}*`,
+                `Active Stock: *${activePhones.length} phones* (Value: ₹${totalStockValue.toLocaleString('en-IN')})`,
+                `Projected Stock Profit: *+₹${expectedStockProfit.toLocaleString('en-IN')}*`,
+              ].join('\n');
+              void shareOnWhatsAppApk(reportMsg, shopProfile.phone);
+            }}
+            className="h-10 px-3 rounded-xl border border-[#A7F3D0] bg-[#E8F5EE] text-[#0F7B49] text-xs font-semibold flex items-center gap-1.5"
+          >
+            <MessageCircle className="w-4 h-4" />
+            WhatsApp
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              generateKycRegisterPdf(
+                kycRecords,
+                shopProfile,
+                new Date().toLocaleDateString('en-IN', {
+                  day: '2-digit',
+                  month: 'short',
+                  year: 'numeric',
+                }),
+                'download'
+              )
+            }
+            className="h-10 px-3.5 rounded-xl bg-[#0F7B49] text-white text-xs font-semibold flex items-center gap-1.5"
+          >
+            <Download className="w-4 h-4" />
+            Export PDF
+          </button>
+        </div>
       </div>
 
       {/* Profit & Sales Cards */}
@@ -846,19 +926,29 @@ export const MoreView: React.FC<MoreViewProps> = ({
   const handleSaveShopProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavingProfile(true);
+    const updatedShop: UserProfile = {
+      ...shopProfile,
+      shopName: shopName.trim().slice(0, 120) || 'My Mobile Shop',
+      ownerName: ownerName.trim().slice(0, 120) || 'Shop Owner',
+      phone: phone.trim().slice(0, 20),
+      city: city.trim().slice(0, 200),
+    };
     const path = `users/${userId}`;
     try {
-      await updateDoc(doc(db, 'users', userId), {
-        shopName: shopName.trim().slice(0, 120) || 'My Mobile Shop',
-        ownerName: ownerName.trim().slice(0, 120) || 'Shop Owner',
-        phone: phone.trim().slice(0, 20),
-        city: city.trim().slice(0, 200),
-        updatedAt: serverTimestamp(),
-      });
+      saveLocalUserCache(userId, { shopProfile: updatedShop });
+      await commitFirestoreWrite(
+        updateDoc(doc(db, 'users', userId), {
+          shopName: updatedShop.shopName,
+          ownerName: updatedShop.ownerName,
+          phone: updatedShop.phone,
+          city: updatedShop.city,
+          updatedAt: serverTimestamp(),
+        }),
+        OperationType.UPDATE,
+        path
+      );
       setSavedNotice(true);
       setTimeout(() => setSavedNotice(false), 2500);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, path);
     } finally {
       setSavingProfile(false);
     }
