@@ -21,14 +21,6 @@ interface KycRegisterViewProps {
   onBack: () => void;
 }
 
-/**
- * Replicates the exact KYC Register screen at 00:59 - 01:05 in the reference video:
- * - Header: <- KYC Register (01 Oct 2026 - 28 Oct 2026)
- * - Period Filter Tabs: Today | This month | Custom
- * - 3 KPI Box Row: Bought (13) | Sold (4) | KYC done (100%)
- * - Register Table: DATE | PHONE / IMEI | SELLER (ID ✓ · Shapath ✓)
- * - Sticky Bottom Bar: Share | Print | ↓ PDF (1-click full register PDF download)
- */
 export const KycRegisterView: React.FC<KycRegisterViewProps> = ({
   shopProfile,
   kycRecords,
@@ -40,38 +32,53 @@ export const KycRegisterView: React.FC<KycRegisterViewProps> = ({
   );
   const [selectedRecord, setSelectedRecord] = useState<KycRecord | null>(null);
 
+  const todayFormatted = useMemo(
+    () =>
+      new Date().toLocaleDateString('en-GB', {
+        day: '2-digit',
+        month: 'short',
+      }),
+    []
+  );
+
   const filteredRecords = useMemo(() => {
     if (period === 'Today') {
       return kycRecords.filter(
-        (r) => r.dateLabel.toLowerCase() === 'today' || r.dateLabel === '28 Oct'
+        (r) =>
+          r.dateLabel.toLowerCase() === 'today' || r.dateLabel === todayFormatted
       );
     }
     return kycRecords;
-  }, [kycRecords, period]);
+  }, [kycRecords, period, todayFormatted]);
 
   const boughtCount = useMemo(
-    () =>
-      Math.max(
-        13,
-        filteredRecords.filter((r) => r.transactionType === 'BUY').length
-      ),
+    () => filteredRecords.filter((r) => r.transactionType === 'BUY').length,
     [filteredRecords]
   );
 
   const soldCount = useMemo(() => {
-    const soldInStock = inventory.filter((p) => p.status === 'Sold').length;
     const soldInKyc = filteredRecords.filter(
       (r) => r.transactionType === 'SELL'
     ).length;
-    return Math.max(4, soldInStock, soldInKyc);
-  }, [inventory, filteredRecords]);
+    if (period === 'Today') {
+      return soldInKyc;
+    }
+    const soldInStock = inventory.filter((p) => p.status === 'Sold').length;
+    return Math.max(soldInStock, soldInKyc);
+  }, [inventory, filteredRecords, period]);
+
+  const kycPercent = filteredRecords.length > 0 ? '100%' : '0%';
+  const currentMonthLabel = new Date().toLocaleDateString('en-IN', {
+    month: 'short',
+    year: 'numeric',
+  });
 
   const handleShareRegister = () => {
     const summaryText = [
       `*${shopProfile.shopName} — Official KYC Register*`,
-      `Period: 01 Oct 2026 – 28 Oct 2026`,
+      `Period: ${currentMonthLabel}`,
       `Total Verified Records: ${filteredRecords.length}`,
-      `KYC Compliance: 100% (ID + Shapath Patra Verified)`,
+      `KYC Compliance: ${kycPercent}`,
       ...filteredRecords
         .slice(0, 8)
         .map(
@@ -86,7 +93,7 @@ export const KycRegisterView: React.FC<KycRegisterViewProps> = ({
 
   return (
     <div className="fixed inset-0 h-dvh z-40 bg-[#F6F7F8] flex flex-col">
-      {/* Top Bar matching video 00:59 */}
+      {/* Top Bar */}
       <div className="bg-white px-4 py-3 border-b border-[#E5E7EB] shrink-0">
         <div className="max-w-xl mx-auto flex items-center gap-3">
           <button
@@ -100,14 +107,16 @@ export const KycRegisterView: React.FC<KycRegisterViewProps> = ({
             <h1 className="font-display font-bold text-lg text-[#111827] leading-tight">
               KYC Register
             </h1>
-            <p className="text-xs text-[#6B7280]">01 Oct 2026 – 28 Oct 2026</p>
+            <p className="text-xs text-[#6B7280]">
+              {shopProfile.shopName} · {currentMonthLabel}
+            </p>
           </div>
         </div>
       </div>
 
       {/* Main Content */}
       <div className="flex-1 min-h-0 overflow-y-auto touch-pan-y p-4 max-w-xl mx-auto w-full pb-28 no-scrollbar space-y-3.5">
-        {/* Period Filter Tabs matching 00:59 */}
+        {/* Period Filter Tabs */}
         <div className="grid grid-cols-3 bg-white rounded-2xl border border-[#E5E7EB] p-1">
           {(['Today', 'This month', 'Custom'] as const).map((tab) => {
             const active = period === tab;
@@ -128,81 +137,93 @@ export const KycRegisterView: React.FC<KycRegisterViewProps> = ({
           })}
         </div>
 
-        {/* 3 KPI Summary Card matching 00:59 */}
+        {/* 3 KPI Summary Card (100% real counts for this user) */}
         <div className="bg-white rounded-2xl border border-[#E5E7EB] grid grid-cols-3 divide-x divide-[#E5E7EB] p-3.5">
           <div className="pr-3">
             <div className="text-xs text-[#6B7280]">Bought</div>
             <div className="font-display font-extrabold text-2xl text-[#111827] mt-0.5 tabular-nums">
-              {period === 'Today' ? filteredRecords.length : boughtCount}
+              {boughtCount}
             </div>
           </div>
           <div className="px-3">
             <div className="text-xs text-[#6B7280]">Sold</div>
             <div className="font-display font-extrabold text-2xl text-[#111827] mt-0.5 tabular-nums">
-              {period === 'Today' ? 2 : soldCount}
+              {soldCount}
             </div>
           </div>
           <div className="pl-3">
             <div className="text-xs text-[#6B7280]">KYC done</div>
             <div className="font-display font-extrabold text-2xl text-[#0F7B49] mt-0.5 tabular-nums">
-              100%
+              {kycPercent}
             </div>
           </div>
         </div>
 
-        {/* KYC Register Table Card matching 01:00 - 01:05 */}
+        {/* KYC Register Table Card */}
         <div className="bg-white rounded-2xl border border-[#E5E7EB] overflow-hidden">
           {/* Column Headers */}
           <div className="grid grid-cols-12 px-4 py-2.5 bg-[#F9FAFB] border-b border-[#E5E7EB] text-[11px] font-bold text-[#6B7280] tracking-wider">
             <div className="col-span-2">DATE</div>
             <div className="col-span-5">PHONE / IMEI</div>
-            <div className="col-span-5">SELLER</div>
+            <div className="col-span-5">SELLER / PARTY</div>
           </div>
 
-          <div className="divide-y divide-[#F3F4F6]">
-            {filteredRecords.map((rec) => {
-              const displayTitle = rec.model
-                .toLowerCase()
-                .startsWith(rec.brand.toLowerCase())
-                ? rec.model
-                : `${rec.brand} ${rec.model}`;
-              const shortImei =
-                rec.imei.length > 8 ? `...${rec.imei.slice(-8)}` : rec.imei;
+          {filteredRecords.length === 0 ? (
+            <div className="p-8 text-center space-y-2">
+              <ShieldCheck className="w-8 h-8 text-[#9CA3AF] mx-auto" />
+              <div className="font-display font-bold text-sm text-[#111827]">
+                No KYC records found
+              </div>
+              <p className="text-xs text-[#6B7280]">
+                When you buy or sell a phone from your account, its verified KYC and Shapath Patra record will appear here automatically.
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-[#F3F4F6]">
+              {filteredRecords.map((rec) => {
+                const displayTitle = rec.model
+                  .toLowerCase()
+                  .startsWith(rec.brand.toLowerCase())
+                  ? rec.model
+                  : `${rec.brand} ${rec.model}`;
+                const shortImei =
+                  rec.imei.length > 8 ? `...${rec.imei.slice(-8)}` : rec.imei;
 
-              return (
-                <button
-                  key={rec.id}
-                  type="button"
-                  onClick={() => setSelectedRecord(rec)}
-                  className="w-full grid grid-cols-12 px-4 py-3.5 items-center text-left hover:bg-[#F9FAFB] transition-colors"
-                >
-                  <div className="col-span-2 text-xs text-[#6B7280] font-medium">
-                    {rec.dateLabel === 'today' ? '28 Oct' : rec.dateLabel}
-                  </div>
-                  <div className="col-span-5 pr-2 min-w-0">
-                    <div className="font-display font-bold text-sm text-[#111827] truncate">
-                      {displayTitle}
+                return (
+                  <button
+                    key={rec.id}
+                    type="button"
+                    onClick={() => setSelectedRecord(rec)}
+                    className="w-full grid grid-cols-12 px-4 py-3.5 items-center text-left hover:bg-[#F9FAFB] transition-colors"
+                  >
+                    <div className="col-span-2 text-xs text-[#6B7280] font-medium">
+                      {rec.dateLabel === 'today' ? todayFormatted : rec.dateLabel}
                     </div>
-                    <div className="text-xs font-mono text-[#6B7280] mt-0.5">
-                      {shortImei}
+                    <div className="col-span-5 pr-2 min-w-0">
+                      <div className="font-display font-bold text-sm text-[#111827] truncate">
+                        {displayTitle}
+                      </div>
+                      <div className="text-xs font-mono text-[#6B7280] mt-0.5">
+                        {shortImei}
+                      </div>
                     </div>
-                  </div>
-                  <div className="col-span-5 min-w-0">
-                    <div className="font-display font-bold text-sm text-[#111827] truncate">
-                      {rec.partyName}
+                    <div className="col-span-5 min-w-0">
+                      <div className="font-display font-bold text-sm text-[#111827] truncate">
+                        {rec.partyName}
+                      </div>
+                      <div className="text-xs font-semibold text-[#0F7B49] mt-0.5">
+                        ID ✓ · Shapath ✓
+                      </div>
                     </div>
-                    <div className="text-xs font-semibold text-[#0F7B49] mt-0.5">
-                      ID ✓ · Shapath ✓
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Bottom Sticky Actions matching 01:02 */}
+      {/* Bottom Sticky Actions */}
       <div className="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-[#E5E7EB] p-4">
         <div className="max-w-xl mx-auto grid grid-cols-3 gap-2.5">
           <button
@@ -219,7 +240,7 @@ export const KycRegisterView: React.FC<KycRegisterViewProps> = ({
               generateKycRegisterPdf(
                 filteredRecords,
                 shopProfile,
-                '01 Oct 2026 - 28 Oct 2026',
+                currentMonthLabel,
                 'print'
               )
             }
@@ -234,7 +255,7 @@ export const KycRegisterView: React.FC<KycRegisterViewProps> = ({
               generateKycRegisterPdf(
                 filteredRecords,
                 shopProfile,
-                '01 Oct 2026 - 28 Oct 2026',
+                currentMonthLabel,
                 'download'
               )
             }
@@ -249,7 +270,7 @@ export const KycRegisterView: React.FC<KycRegisterViewProps> = ({
       {/* Individual KYC Record Inspection Modal */}
       {selectedRecord && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl p-5 space-y-4 shadow-2xl animate-sheet-up max-h-[88vh] overflow-y-auto no-scrollbar">
+          <div className="w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl p-5 space-y-4 shadow-2xl animate-sheet-up max-h-[88dvh] overflow-y-auto touch-pan-y no-scrollbar">
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-[#E8F5EE] text-[#0F7B49] flex items-center justify-center">
@@ -260,7 +281,7 @@ export const KycRegisterView: React.FC<KycRegisterViewProps> = ({
                     Verified KYC Record · {selectedRecord.stockCode}
                   </h3>
                   <p className="text-xs text-[#6B7280]">
-                    {selectedRecord.dateLabel} 2026 · {selectedRecord.transactionType}
+                    {selectedRecord.dateLabel} · {selectedRecord.transactionType}
                   </p>
                 </div>
               </div>
@@ -286,7 +307,7 @@ export const KycRegisterView: React.FC<KycRegisterViewProps> = ({
                 <strong className="font-mono">{selectedRecord.imei}</strong>
               </div>
               <div>
-                <span className="text-[#6B7280]">Seller Name:</span>{' '}
+                <span className="text-[#6B7280]">Party Name:</span>{' '}
                 <strong>{selectedRecord.partyName}</strong> (+91{' '}
                 {selectedRecord.partyMobile})
               </div>
@@ -310,34 +331,36 @@ export const KycRegisterView: React.FC<KycRegisterViewProps> = ({
             </div>
 
             {/* Attached ID Photos & Signature */}
-            <div className="grid grid-cols-2 gap-2.5">
-              {selectedRecord.idFrontUrl && (
-                <div className="rounded-xl overflow-hidden border border-[#E5E7EB]">
-                  <img
-                    src={selectedRecord.idFrontUrl}
-                    alt="ID Front"
-                    referrerPolicy="no-referrer"
-                    className="w-full h-24 object-cover"
-                  />
-                  <div className="text-[10px] font-semibold text-center py-1 bg-[#F9FAFB] text-[#4B5563]">
-                    ID Front ({selectedRecord.idMasked})
+            {(selectedRecord.idFrontUrl || selectedRecord.idBackUrl) && (
+              <div className="grid grid-cols-2 gap-2.5">
+                {selectedRecord.idFrontUrl && (
+                  <div className="rounded-xl overflow-hidden border border-[#E5E7EB]">
+                    <img
+                      src={selectedRecord.idFrontUrl}
+                      alt="ID Front"
+                      referrerPolicy="no-referrer"
+                      className="w-full h-24 object-cover"
+                    />
+                    <div className="text-[10px] font-semibold text-center py-1 bg-[#F9FAFB] text-[#4B5563]">
+                      ID Front ({selectedRecord.idMasked})
+                    </div>
                   </div>
-                </div>
-              )}
-              {selectedRecord.idBackUrl && (
-                <div className="rounded-xl overflow-hidden border border-[#E5E7EB]">
-                  <img
-                    src={selectedRecord.idBackUrl}
-                    alt="ID Back"
-                    referrerPolicy="no-referrer"
-                    className="w-full h-24 object-cover"
-                  />
-                  <div className="text-[10px] font-semibold text-center py-1 bg-[#F9FAFB] text-[#4B5563]">
-                    ID Back
+                )}
+                {selectedRecord.idBackUrl && (
+                  <div className="rounded-xl overflow-hidden border border-[#E5E7EB]">
+                    <img
+                      src={selectedRecord.idBackUrl}
+                      alt="ID Back"
+                      referrerPolicy="no-referrer"
+                      className="w-full h-24 object-cover"
+                    />
+                    <div className="text-[10px] font-semibold text-center py-1 bg-[#F9FAFB] text-[#4B5563]">
+                      ID Back
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
 
             {selectedRecord.signatureDataUrl && (
               <div className="rounded-xl border border-[#E5E7EB] p-2 bg-white text-center">
@@ -373,7 +396,7 @@ export const KycRegisterView: React.FC<KycRegisterViewProps> = ({
                     photoBack: '',
                     photoSides: '',
                     photoScreenOn: '',
-                    accessories: ['Box', 'Charger'],
+                    accessories: [],
                     conditionScreen: 'OK' as const,
                     conditionBody: 'OK' as const,
                     conditionCamera: 'OK' as const,
@@ -382,12 +405,12 @@ export const KycRegisterView: React.FC<KycRegisterViewProps> = ({
                     conditionAudio: 'OK' as const,
                     conditionButtons: 'OK' as const,
                     batteryHealth: 86,
-                    checksPassed: 7,
-                    grade: 'B' as const,
+                    checksPassed: 8,
+                    grade: 'A' as const,
                     buyingPrice: selectedRecord.price,
-                    expectedSellingPrice: selectedRecord.price + 2500,
+                    expectedSellingPrice: selectedRecord.price,
                     actualSellingPrice: 0,
-                    expectedProfit: 2500,
+                    expectedProfit: 0,
                     notes: '',
                     sellerName: selectedRecord.partyName,
                     sellerMobile: selectedRecord.partyMobile,
@@ -401,7 +424,7 @@ export const KycRegisterView: React.FC<KycRegisterViewProps> = ({
                     buyerName: '',
                     buyerMobile: '',
                     purchaseDate: selectedRecord.dateLabel,
-                    daysInStock: 1,
+                    daysInStock: 0,
                     kycId: selectedRecord.id,
                   };
                 generateShapathPatraPdf(

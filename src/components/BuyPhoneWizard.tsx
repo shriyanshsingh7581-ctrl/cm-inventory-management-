@@ -12,16 +12,20 @@ import {
 } from '../types';
 import {
   BRAND_MODELS,
-  generateDemoSignatureDataUrl,
-  generateSampleIdCardPhoto,
-  generateSamplePhonePhoto,
   lookupImeiSpecs,
   maskGovernmentId,
   uploadToCloudinary,
 } from '../utils/imeiDatabase';
 import { generateShapathPatraPdf } from '../utils/pdfGenerator';
+import {
+  AiExtractedScanResult,
+  AiExtractedVoiceResult,
+  extractPhoneOrBillViaAiVision,
+  scanCapturedPhotoForImeiAndSpecs,
+} from '../utils/apkMediaEngine';
 import { ImeiScannerModal } from './ImeiScannerModal';
 import { SignaturePadModal } from './SignaturePadModal';
+import { ApkVoiceButton } from './SmartVoiceModal';
 import {
   ArrowLeft,
   BatteryCharging,
@@ -33,6 +37,7 @@ import {
   ExternalLink,
   FileText,
   Headphones,
+  Image as ImageIcon,
   Loader2,
   MessageCircle,
   Plug,
@@ -50,6 +55,8 @@ interface BuyPhoneWizardProps {
   shopProfile: UserProfile;
   existingInventory: PhoneInventoryItem[];
   initialSourceType?: 'Customer' | 'Dealer';
+  initialScannedSpecs?: AiExtractedScanResult | null;
+  initialVoiceDraft?: AiExtractedVoiceResult | null;
   onClose: () => void;
   onComplete: (savedPhone: PhoneInventoryItem, savedKyc: KycRecord) => void;
 }
@@ -70,6 +77,8 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
   shopProfile,
   existingInventory,
   initialSourceType = 'Customer',
+  initialScannedSpecs = null,
+  initialVoiceDraft = null,
   onClose,
   onComplete,
 }) => {
@@ -80,6 +89,9 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
   const [uploadingSlot, setUploadingSlot] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [scanSuccessNotice, setScanSuccessNotice] = useState<string | null>(null);
+
+  const [aiScanningBoxOrBill, setAiScanningBoxOrBill] = useState(false);
 
   // Completed state for post-save Shapath Patra screen (00:51 in video)
   const [savedResult, setSavedResult] = useState<{
@@ -88,48 +100,100 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
   } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const frontCameraInputRef = useRef<HTMLInputElement | null>(null);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
+  const aiBillScanInputRef = useRef<HTMLInputElement | null>(null);
   const activeUploadTargetRef = useRef<string>('');
 
-  const [draft, setDraft] = useState<BuyPhoneDraft>({
-    noImeiDeadPhone: false,
-    imei: '',
-    showImei2: false,
-    imei2: '',
-    brand: '',
-    model: '',
-    ram: '',
-    storage: '',
-    colour: 'Black',
-    photoFront: '',
-    photoBack: '',
-    photoSides: '',
-    photoScreenOn: '',
-    accessories: [],
-    conditionScreen: 'OK',
-    conditionBody: 'OK',
-    conditionCamera: 'OK',
-    conditionBiometrics: 'OK',
-    conditionCharging: 'OK',
-    conditionAudio: 'OK',
-    conditionButtons: 'OK',
-    batteryHealth: 86,
-    manualGradeOverride: null,
-    buyingPrice: '',
-    expectedSellingPrice: '',
-    notes: '',
-    sellerMobile: '',
-    sellerName: '',
-    sellerAddress: '',
-    idType: 'Aadhaar',
-    idRawNumber: '',
-    idFrontUrl: '',
-    idBackUrl: '',
-    sellerPhotoUrl: '',
-    signatureDataUrl: '',
-    declarationAccepted: false,
-    shapathLanguage: 'Hindi',
-    payments: [{ method: 'Cash', amount: 0 }],
-    sourceType: initialSourceType,
+  const [draft, setDraft] = useState<BuyPhoneDraft>(() => {
+    const imeiInit =
+      initialScannedSpecs?.imei ||
+      initialVoiceDraft?.imei?.replace(/\D/g, '').slice(0, 15) ||
+      '';
+    const tacSpec = imeiInit.length === 15 ? lookupImeiSpecs(imeiInit) : null;
+    const buyPriceInit =
+      initialScannedSpecs?.buyingPrice || initialVoiceDraft?.buyingPrice || 0;
+    const sellPriceInit =
+      initialScannedSpecs?.expectedSellingPrice ||
+      initialVoiceDraft?.expectedSellingPrice ||
+      0;
+
+    return {
+      noImeiDeadPhone: false,
+      imei: imeiInit,
+      showImei2: Boolean(initialScannedSpecs?.imei2),
+      imei2: initialScannedSpecs?.imei2 || '',
+      brand:
+        initialScannedSpecs?.brand ||
+        initialVoiceDraft?.brand ||
+        tacSpec?.brand ||
+        '',
+      model:
+        initialScannedSpecs?.model ||
+        initialVoiceDraft?.model ||
+        tacSpec?.model ||
+        '',
+      ram:
+        initialScannedSpecs?.ram || initialVoiceDraft?.ram || tacSpec?.ram || '',
+      storage:
+        initialScannedSpecs?.storage ||
+        initialVoiceDraft?.storage ||
+        tacSpec?.storage ||
+        '',
+      colour:
+        initialScannedSpecs?.colour ||
+        initialVoiceDraft?.colour ||
+        tacSpec?.colour ||
+        'Black',
+      photoFront: '',
+      photoBack: '',
+      photoSides: '',
+      photoScreenOn: '',
+      accessories: [],
+      conditionScreen: 'OK',
+      conditionBody: 'OK',
+      conditionCamera: 'OK',
+      conditionBiometrics: 'OK',
+      conditionCharging: 'OK',
+      conditionAudio: 'OK',
+      conditionButtons: 'OK',
+      batteryHealth: 86,
+      manualGradeOverride: null,
+      buyingPrice: buyPriceInit > 0 ? String(buyPriceInit) : '',
+      expectedSellingPrice: sellPriceInit > 0 ? String(sellPriceInit) : '',
+      notes: initialScannedSpecs?.notes || initialVoiceDraft?.notes || '',
+      sellerMobile:
+        initialScannedSpecs?.sellerMobile ||
+        initialVoiceDraft?.sellerMobile ||
+        '',
+      sellerName:
+        initialScannedSpecs?.sellerName || initialVoiceDraft?.sellerName || '',
+      sellerAddress:
+        initialScannedSpecs?.sellerAddress ||
+        initialVoiceDraft?.sellerAddress ||
+        '',
+      idType:
+        initialScannedSpecs?.idType || initialVoiceDraft?.idType || 'Aadhaar',
+      idRawNumber:
+        initialScannedSpecs?.idNumber || initialVoiceDraft?.idNumber || '',
+      idFrontUrl: '',
+      idBackUrl: '',
+      sellerPhotoUrl: '',
+      signatureDataUrl: '',
+      declarationAccepted: false,
+      shapathLanguage: 'Hindi',
+      payments: [
+        {
+          method:
+            initialVoiceDraft?.paymentMethod === 'UPI' ||
+            initialVoiceDraft?.paymentMethod === 'Bank Transfer'
+              ? initialVoiceDraft.paymentMethod
+              : 'Cash',
+          amount: buyPriceInit,
+        },
+      ],
+      sourceType: initialSourceType,
+    };
   });
 
   // Check if IMEI is valid 15 digits & not already in stock
@@ -144,12 +208,18 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
   );
   const isValidImei = imeiDigits.length === 15 && !isDuplicateImei;
 
-  // Handle IMEI change & auto-fill specs
-  const handleImeiInput = (raw: string) => {
+  // Handle IMEI change & auto-fill specs (plus optional AI Vision extracted specs)
+  const handleImeiInput = (
+    raw: string,
+    aiSpecs?: AiExtractedScanResult
+  ) => {
     const clean = raw.replace(/\D/g, '').slice(0, 15);
     setValidationError(null);
     setDraft((prev) => {
-      const next = { ...prev, imei: clean };
+      const next = { ...prev };
+      if (clean) {
+        next.imei = clean;
+      }
       if (clean.length === 15) {
         const spec = lookupImeiSpecs(clean);
         if (spec) {
@@ -159,6 +229,86 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
           next.storage = spec.storage;
           next.colour = spec.colour;
         }
+      }
+      if (aiSpecs) {
+        if (aiSpecs.imei && aiSpecs.imei.length === 15) next.imei = aiSpecs.imei;
+        if (aiSpecs.imei2 && aiSpecs.imei2.length === 15) {
+          next.showImei2 = true;
+          next.imei2 = aiSpecs.imei2;
+        }
+        if (aiSpecs.brand) next.brand = aiSpecs.brand;
+        if (aiSpecs.model) next.model = aiSpecs.model;
+        if (aiSpecs.ram) next.ram = aiSpecs.ram;
+        if (aiSpecs.storage) next.storage = aiSpecs.storage;
+        if (aiSpecs.colour) next.colour = aiSpecs.colour;
+        if (aiSpecs.buyingPrice && aiSpecs.buyingPrice > 0) {
+          next.buyingPrice = String(aiSpecs.buyingPrice);
+        }
+        if (aiSpecs.expectedSellingPrice && aiSpecs.expectedSellingPrice > 0) {
+          next.expectedSellingPrice = String(aiSpecs.expectedSellingPrice);
+        }
+        if (aiSpecs.sellerName) next.sellerName = aiSpecs.sellerName;
+        if (aiSpecs.sellerMobile) next.sellerMobile = aiSpecs.sellerMobile;
+        if (aiSpecs.sellerAddress) next.sellerAddress = aiSpecs.sellerAddress;
+        if (aiSpecs.idType) next.idType = aiSpecs.idType;
+        if (aiSpecs.idNumber) next.idRawNumber = aiSpecs.idNumber;
+        if (aiSpecs.notes) next.notes = aiSpecs.notes;
+      }
+      return next;
+    });
+  };
+
+  // Apply Voice-to-Form AI extracted fields across all steps
+  const handleApplyVoiceResult = (voice: AiExtractedVoiceResult) => {
+    setValidationError(null);
+    setDraft((prev) => {
+      const next = { ...prev };
+      if (voice.imei && voice.imei.replace(/\D/g, '').length === 15) {
+        next.imei = voice.imei.replace(/\D/g, '').slice(0, 15);
+      }
+      if (voice.brand) next.brand = voice.brand;
+      if (voice.model) next.model = voice.model;
+      if (voice.ram) next.ram = voice.ram;
+      if (voice.storage) next.storage = voice.storage;
+      if (voice.colour) next.colour = voice.colour;
+      if (voice.buyingPrice && voice.buyingPrice > 0) {
+        next.buyingPrice = String(voice.buyingPrice);
+      }
+      if (voice.expectedSellingPrice && voice.expectedSellingPrice > 0) {
+        next.expectedSellingPrice = String(voice.expectedSellingPrice);
+      } else if (voice.sellingPrice && voice.sellingPrice > 0 && !prev.buyingPrice) {
+        next.buyingPrice = String(voice.sellingPrice);
+      }
+      if (voice.sellerName || voice.buyerName) {
+        next.sellerName = voice.sellerName || voice.buyerName || prev.sellerName;
+      }
+      if (voice.sellerMobile || voice.buyerMobile) {
+        next.sellerMobile = (voice.sellerMobile || voice.buyerMobile || '')
+          .replace(/\D/g, '')
+          .slice(-10);
+      }
+      if (voice.sellerAddress || voice.buyerAddress) {
+        next.sellerAddress =
+          voice.sellerAddress || voice.buyerAddress || prev.sellerAddress;
+      }
+      if (voice.idType) next.idType = voice.idType;
+      if (voice.idNumber) next.idRawNumber = voice.idNumber;
+      if (voice.notes) next.notes = voice.notes;
+      if (
+        voice.paymentMethod &&
+        (voice.paymentMethod === 'Cash' ||
+          voice.paymentMethod === 'UPI' ||
+          voice.paymentMethod === 'Bank Transfer')
+      ) {
+        next.payments = [
+          {
+            method: voice.paymentMethod,
+            amount:
+              Number(next.buyingPrice || prev.buyingPrice || 0) ||
+              prev.payments[0]?.amount ||
+              0,
+          },
+        ];
       }
       return next;
     });
@@ -226,10 +376,19 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
   const expectedProfit =
     expectedSellingNum > 0 ? expectedSellingNum - buyingPriceNum : 0;
 
-  // Trigger file picker + Cloudinary upload
-  const triggerFileUpload = (slotKey: string) => {
+  // Trigger Native Camera or Gallery picker + Cloudinary upload
+  const triggerFileUpload = (
+    slotKey: string,
+    source: 'environment' | 'user' | 'gallery' = 'environment'
+  ) => {
     activeUploadTargetRef.current = slotKey;
-    fileInputRef.current?.click();
+    if (source === 'gallery') {
+      galleryInputRef.current?.click();
+    } else if (source === 'user') {
+      frontCameraInputRef.current?.click();
+    } else {
+      fileInputRef.current?.click();
+    }
   };
 
   const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -239,54 +398,89 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
 
     setUploadingSlot(targetSlot);
     try {
-      const uploadedUrl = await uploadToCloudinary(file);
-      setDraft((prev) => ({
-        ...prev,
-        [targetSlot]: uploadedUrl,
-      }));
+      // If capturing ID Front or ID Back in Step 6, also run AI Vision OCR in parallel to auto-extract ID number/name/address!
+      const isIdCardSlot =
+        targetSlot === 'idFrontUrl' || targetSlot === 'idBackUrl';
+
+      const [uploadedUrl, ocrData] = await Promise.all([
+        uploadToCloudinary(file),
+        isIdCardSlot ? extractPhoneOrBillViaAiVision(file) : Promise.resolve(null),
+      ]);
+
+      setDraft((prev) => {
+        const next: BuyPhoneDraft = {
+          ...prev,
+          [targetSlot]: uploadedUrl,
+        };
+        if (ocrData) {
+          if (ocrData.idType && !prev.idRawNumber) {
+            next.idType = ocrData.idType;
+          }
+          if (ocrData.idNumber && !prev.idRawNumber) {
+            next.idRawNumber = ocrData.idNumber;
+          }
+          if (ocrData.sellerName && !prev.sellerName) {
+            next.sellerName = ocrData.sellerName;
+          }
+          if (ocrData.sellerAddress && !prev.sellerAddress) {
+            next.sellerAddress = ocrData.sellerAddress;
+          }
+        }
+        return next;
+      });
     } finally {
       setUploadingSlot(null);
       e.target.value = '';
     }
   };
 
-  // Helper to populate realistic demo photo and upload to Cloudinary
-  const handleQuickSamplePhoto = async (
-    slotKey: 'photoFront' | 'photoBack' | 'photoSides' | 'photoScreenOn',
-    angle: 'Front' | 'Back' | 'Sides' | 'Screen ON'
+  // Direct 1-tap Native Camera AI Scan for Box / Barcode / IMEI / Paper Bill
+  const handleDirectAiBoxOrBillPhoto = async (
+    e: React.ChangeEvent<HTMLInputElement>
   ) => {
-    setUploadingSlot(slotKey);
-    try {
-      const sampleDataUrl = generateSamplePhonePhoto(
-        angle,
-        '#2A3342',
-        draft.model || 'Galaxy A52'
-      );
-      const url = await uploadToCloudinary(sampleDataUrl);
-      setDraft((prev) => ({ ...prev, [slotKey]: url }));
-    } finally {
-      setUploadingSlot(null);
-    }
-  };
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
 
-  const handleQuickSampleIdPhoto = async (side: 'front' | 'back') => {
-    const slotKey = side === 'front' ? 'idFrontUrl' : 'idBackUrl';
-    setUploadingSlot(slotKey);
+    setAiScanningBoxOrBill(true);
+    setValidationError(null);
+    setScanSuccessNotice(null);
     try {
-      const { last4 } = maskGovernmentId(
-        draft.idType,
-        draft.idRawNumber || '987654324321'
+      const [scanResult, uploadedBoxPhotoUrl] = await Promise.all([
+        scanCapturedPhotoForImeiAndSpecs(file),
+        uploadToCloudinary(file),
+      ]);
+      handleImeiInput(scanResult.imei || '', scanResult);
+      // Also attach photo if photoFront is empty
+      if (uploadedBoxPhotoUrl) {
+        setDraft((prev) => ({
+          ...prev,
+          photoFront: prev.photoFront || uploadedBoxPhotoUrl,
+        }));
+      }
+      if (scanResult.imei) {
+        setScanSuccessNotice(
+          `IMEI ${scanResult.imei} scanned${
+            scanResult.brand || scanResult.model
+              ? ` · ${scanResult.brand || ''} ${scanResult.model || ''}`.trim()
+              : ''
+          }`
+        );
+      } else if (scanResult.brand || scanResult.model) {
+        setScanSuccessNotice(
+          `Model detected (${scanResult.brand || ''} ${scanResult.model || ''}). Please enter 15-digit IMEI.`
+        );
+      } else {
+        setValidationError(
+          'Could not read a clear 15-digit IMEI from that photo. Hold camera closer or type IMEI manually.'
+        );
+      }
+    } catch {
+      setValidationError(
+        'Unable to read photo. Please try again with good lighting or enter IMEI manually.'
       );
-      const sampleIdUrl = generateSampleIdCardPhoto(
-        side,
-        draft.sellerName || 'Mahesh Joshi',
-        draft.sellerAddress || '22, Sudama Nagar, Indore',
-        last4
-      );
-      const url = await uploadToCloudinary(sampleIdUrl);
-      setDraft((prev) => ({ ...prev, [slotKey]: url }));
     } finally {
-      setUploadingSlot(null);
+      setAiScanningBoxOrBill(false);
     }
   };
 
@@ -371,42 +565,36 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
     setValidationError(null);
 
     try {
-      const now = new Date();
-      const dayNum = now.getDate();
-      const monthLabel = now.toLocaleString('en-US', { month: 'short' });
-      const dateLabel = `28 Oct`; // Matches video reference date or current date
-      void dayNum;
-      void monthLabel;
+      const dateLabel = new Date().toLocaleDateString('en-GB', {
+        day: '2-digit',
+        month: 'short',
+      });
 
-      const nextCount = existingInventory.length + 5;
+      const nextCount = existingInventory.length + 1;
       const stockCode = `OP-${conditionCalculations.grade}-${String(nextCount).padStart(4, '0')}`;
       const phoneId = `phone_${Date.now()}`;
       const kycId = `kyc_${Date.now()}`;
 
       const { last4, masked } = maskGovernmentId(
         draft.idType,
-        draft.idRawNumber || '4321'
+        draft.idRawNumber
       );
 
-      const defaultPhoto =
-        draft.photoFront ||
-        draft.photoBack ||
-        generateSamplePhonePhoto('Back', '#2A3342', draft.model);
+      const safeMediaField = (val: string) =>
+        val.length <= 148000 ? val : '';
 
-      const idFrontFinal =
-        draft.idFrontUrl ||
-        generateSampleIdCardPhoto('front', draft.sellerName, draft.sellerAddress, last4);
-      const idBackFinal =
-        draft.idBackUrl ||
-        generateSampleIdCardPhoto('back', draft.sellerName, draft.sellerAddress, last4);
-      const sellerPhotoFinal = draft.sellerPhotoUrl || idFrontFinal;
-      const signatureFinal = draft.signatureDataUrl || generateDemoSignatureDataUrl();
+      const defaultPhoto = safeMediaField(draft.photoFront || draft.photoBack || '');
+      const idFrontFinal = safeMediaField(draft.idFrontUrl || '');
+      const idBackFinal = safeMediaField(draft.idBackUrl || '');
+      const sellerPhotoFinal = safeMediaField(draft.sellerPhotoUrl || '');
+      const signatureFinal = safeMediaField(draft.signatureDataUrl || '');
 
       const totalPaid = draft.payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-      const paymentMethodLabel =
+      const paymentMethodLabel = (
         draft.payments.length > 1
           ? draft.payments.map((p) => p.method).join(' + ')
-          : draft.payments[0]?.method || 'Cash';
+          : draft.payments[0]?.method || 'Cash'
+      ).slice(0, 40);
 
       // Determine initial stock status: if any condition issue or dead phone -> 'Under repair', else 'Ready'
       const initialStatus = conditionCalculations.hasAnyIssue ? 'Under repair' : 'Ready';
@@ -414,20 +602,20 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
       const newPhone: PhoneInventoryItem = {
         id: phoneId,
         userId,
-        stockCode,
+        stockCode: stockCode.slice(0, 40),
         noImeiDeadPhone: draft.noImeiDeadPhone,
-        imei: draft.noImeiDeadPhone ? 'DEAD-NO-IMEI' : imeiDigits,
+        imei: draft.noImeiDeadPhone ? 'DEAD-NO-IMEI' : imeiDigits.slice(0, 32),
         imei2: draft.imei2.replace(/\D/g, '').slice(0, 15),
         brand: draft.brand.trim().slice(0, 60),
         model: draft.model.trim().slice(0, 100),
-        ram: draft.ram || '6 GB',
-        storage: draft.storage || '128 GB',
-        colour: draft.colour || 'Black',
+        ram: (draft.ram || '6 GB').trim().slice(0, 20),
+        storage: (draft.storage || '128 GB').trim().slice(0, 20),
+        colour: (draft.colour || 'Black').trim().slice(0, 40),
         photoFront: defaultPhoto,
-        photoBack: draft.photoBack || defaultPhoto,
-        photoSides: draft.photoSides || '',
-        photoScreenOn: draft.photoScreenOn || '',
-        accessories: draft.accessories.slice(0, 10),
+        photoBack: safeMediaField(draft.photoBack || defaultPhoto),
+        photoSides: safeMediaField(draft.photoSides || ''),
+        photoScreenOn: safeMediaField(draft.photoScreenOn || ''),
+        accessories: draft.accessories.slice(0, 10).map((a) => a.slice(0, 30)),
         conditionScreen: draft.conditionScreen,
         conditionBody: draft.conditionBody,
         conditionCamera: draft.conditionCamera,
@@ -448,8 +636,8 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
         sellerName: draft.sellerName.trim().slice(0, 120),
         sellerMobile: draft.sellerMobile.replace(/\D/g, '').slice(0, 15),
         sellerAddress: draft.sellerAddress.trim().slice(0, 300),
-        idType: draft.idType,
-        idMasked: masked,
+        idType: (draft.idType || 'Aadhaar').slice(0, 40),
+        idMasked: masked.slice(0, 30),
         paymentMethod: paymentMethodLabel,
         paidAmount: Math.round(totalPaid),
         status: initialStatus,
@@ -465,9 +653,9 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
         id: kycId,
         userId,
         phoneId,
-        stockCode,
+        stockCode: newPhone.stockCode,
         transactionType: 'BUY',
-        dateLabel,
+        dateLabel: dateLabel.slice(0, 40),
         brand: newPhone.brand,
         model: newPhone.model,
         ram: newPhone.ram,
@@ -478,9 +666,9 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
         partyName: newPhone.sellerName,
         partyMobile: newPhone.sellerMobile,
         partyAddress: newPhone.sellerAddress,
-        idType: draft.idType,
+        idType: newPhone.idType,
         idLast4: last4,
-        idMasked: masked,
+        idMasked: newPhone.idMasked,
         idFrontUrl: idFrontFinal,
         idBackUrl: idBackFinal,
         sellerPhotoUrl: sellerPhotoFinal,
@@ -621,7 +809,7 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
                     {shopProfile.shopName}
                   </div>
                   <div className="text-[8px] text-[#6B7280]">
-                    {shopProfile.city || 'Shop 12, M.G. Road, Indore'}
+                    {shopProfile.city || shopProfile.phone || 'Verified Mobile Store'}
                   </div>
                 </div>
                 <div className="border border-[#9CA3AF] rounded px-2 py-1 text-[7px] text-[#6B7280] text-center">
@@ -790,7 +978,7 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
 
   return (
     <div className="fixed inset-0 h-dvh z-40 bg-[#F6F7F8] flex flex-col">
-      {/* Hidden File Input for Camera / Gallery Upload */}
+      {/* Hidden Native Hardware Camera & Gallery Inputs (100% Android Web-APK Compatible) */}
       <input
         ref={fileInputRef}
         type="file"
@@ -799,20 +987,43 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
         onChange={handleFileSelected}
         className="hidden"
       />
+      <input
+        ref={frontCameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="user"
+        onChange={handleFileSelected}
+        className="hidden"
+      />
+      <input
+        ref={galleryInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleFileSelected}
+        className="hidden"
+      />
+      <input
+        ref={aiBillScanInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleDirectAiBoxOrBillPhoto}
+        className="hidden"
+      />
 
-      {/* Top Wizard Header matching video 00:11 */}
+      {/* Top Wizard Header matching video 00:11 + Universal APK AI Voice Button */}
       <div className="bg-white px-4 pt-3 pb-2.5 shrink-0">
-        <div className="max-w-xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="max-w-xl mx-auto flex items-center justify-between gap-2">
+          <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
               onClick={() => (step === 1 ? onClose() : setStep((s) => s - 1))}
-              className="w-10 h-10 rounded-full bg-[#F3F4F6] flex items-center justify-center text-[#111827]"
+              className="w-10 h-10 rounded-full bg-[#F3F4F6] flex items-center justify-center text-[#111827] shrink-0"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
-            <div>
-              <h2 className="font-display font-bold text-base text-[#111827] leading-tight">
+            <div className="min-w-0">
+              <h2 className="font-display font-bold text-base text-[#111827] leading-tight truncate">
                 {draft.sourceType === 'Dealer' ? 'Dealer buy phone' : 'Buy phone'}
               </h2>
               <p className="text-xs text-[#6B7280]">
@@ -821,17 +1032,12 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
             </div>
           </div>
 
-          {/* Quick Demo Auto-Fill Helper */}
-          {step === 1 && !draft.imei && (
-            <button
-              type="button"
-              onClick={() => handleImeiInput('356938035643809')}
-              className="h-8 px-3 rounded-lg bg-[#E8F5EE] text-[#0F7B49] text-xs font-semibold flex items-center gap-1"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              Demo A52
-            </button>
-          )}
+          <ApkVoiceButton
+            context="buy_phone"
+            label="AI Voice"
+            compact
+            onResult={handleApplyVoiceResult}
+          />
         </div>
       </div>
 
@@ -852,6 +1058,21 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
               type="button"
               onClick={() => setValidationError(null)}
               className="text-red-500 ml-2"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+        {scanSuccessNotice && (
+          <div className="p-3 rounded-xl bg-[#E8F5EE] border border-[#A7F3D0] text-xs font-semibold text-[#064E3B] flex items-center justify-between">
+            <span className="flex items-center gap-1.5">
+              <Check className="w-4 h-4 text-[#0F7B49] shrink-0" />
+              {scanSuccessNotice}
+            </span>
+            <button
+              type="button"
+              onClick={() => setScanSuccessNotice(null)}
+              className="text-[#0F7B49] ml-2"
             >
               <X className="w-4 h-4" />
             </button>
@@ -894,6 +1115,38 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
                 />
               </button>
             </div>
+
+            {/* Direct Native APK AI Scan (Box / Bill / *#06#) Card */}
+            <button
+              type="button"
+              disabled={aiScanningBoxOrBill}
+              onClick={() => aiBillScanInputRef.current?.click()}
+              className="w-full p-3.5 rounded-2xl bg-[#E8F5EE] border border-[#A7F3D0] flex items-center justify-between gap-3 text-left hover:bg-[#D1FAE5]/70 transition-colors disabled:opacity-60"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-[#0F7B49] text-white flex items-center justify-center shrink-0">
+                  {aiScanningBoxOrBill ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <Camera className="w-5 h-5" />
+                  )}
+                </div>
+                <div>
+                  <div className="font-display font-bold text-xs text-[#064E3B] flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-[#0F7B49]" />
+                    {aiScanningBoxOrBill
+                      ? 'Reading IMEI & Model with AI Vision...'
+                      : 'AI Scan Box / *#06# / Bill Photo'}
+                  </div>
+                  <div className="text-[11px] text-[#0F7B49] mt-0.5">
+                    Opens Android Camera &amp; auto-fills IMEI, Brand, Model &amp; Specs
+                  </div>
+                </div>
+              </div>
+              <span className="text-xs font-bold text-[#0F7B49] shrink-0">
+                Scan &rarr;
+              </span>
+            </button>
 
             {/* IMEI Input + Scan Button */}
             {!draft.noImeiDeadPhone && (
@@ -1135,20 +1388,28 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
                 </h3>
                 <button
                   type="button"
-                  onClick={async () => {
-                    await handleQuickSamplePhoto('photoFront', 'Front');
-                    await handleQuickSamplePhoto('photoBack', 'Back');
+                  onClick={() => {
+                    const firstEmpty = (
+                      [
+                        'photoFront',
+                        'photoBack',
+                        'photoSides',
+                        'photoScreenOn',
+                      ] as const
+                    ).find((k) => !draft[k]);
+                    triggerFileUpload(firstEmpty || 'photoFront', 'gallery');
                   }}
-                  className="text-xs font-semibold text-[#0F7B49] hover:underline"
+                  className="text-xs font-semibold text-[#0F7B49] flex items-center gap-1"
                 >
-                  + Fill sample photos
+                  <ImageIcon className="w-3.5 h-3.5" />
+                  Upload from Gallery
                 </button>
               </div>
               <p className="text-xs text-[#6B7280] mb-3">
-                Proof of the phone&apos;s condition (Synced via Cloudinary)
+                Tap any slot to open Camera directly (Synced via Cloudinary)
               </p>
 
-              {/* 4 Photo Upload Boxes matching 00:19 */}
+              {/* 4 Photo Upload Boxes */}
               <div className="grid grid-cols-4 gap-2.5">
                 {(
                   [
@@ -1186,24 +1447,16 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
                           {isUploading ? (
                             <Loader2 className="w-5 h-5 text-[#0F7B49] animate-spin" />
                           ) : (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => triggerFileUpload(slot.key)}
-                                className="w-full flex-1 flex flex-col items-center justify-center text-xs font-medium text-[#6B7280] hover:text-[#111827]"
-                              >
-                                <span>+ {slot.label}</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleQuickSamplePhoto(slot.key, slot.label)
-                                }
-                                className="text-[10px] font-semibold text-[#0F7B49] pb-1"
-                              >
-                                Demo
-                              </button>
-                            </>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                triggerFileUpload(slot.key, 'environment')
+                              }
+                              className="w-full flex-1 flex flex-col items-center justify-center gap-1 text-[11px] font-medium text-[#6B7280] hover:text-[#111827]"
+                            >
+                              <Camera className="w-4 h-4 text-[#0F7B49]" />
+                              <span>{slot.label}</span>
+                            </button>
                           )}
                         </div>
                       )}
@@ -1559,21 +1812,16 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
         ============================================================ */}
         {step === 5 && (
           <div className="space-y-4">
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    sellerMobile: '9827045678',
-                    sellerName: 'Mahesh Joshi',
-                    sellerAddress: '22, Sudama Nagar, Indore',
-                  }))
-                }
-                className="text-xs font-semibold text-[#0F7B49] hover:underline"
-              >
-                + Fill video demo seller (Mahesh Joshi)
-              </button>
+            <div className="flex items-center justify-between bg-[#E8F5EE] border border-[#A7F3D0] rounded-2xl p-3">
+              <div className="text-xs font-semibold text-[#064E3B]">
+                Speak Seller Name, Mobile &amp; Address in Hindi/English
+              </div>
+              <ApkVoiceButton
+                context="buy_phone"
+                label="Voice Fill"
+                compact
+                onResult={handleApplyVoiceResult}
+              />
             </div>
 
             {/* Seller Mobile */}
@@ -1651,7 +1899,7 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
                   Seller ID proof
                 </div>
                 <div className="text-xs text-[#4B5563]">
-                  Photos stay only on this phone and in your Google Drive backup
+                  Photos are encrypted and backed up in your private shop account
                 </div>
               </div>
             </div>
@@ -1682,22 +1930,6 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
                 <label className="text-xs font-medium text-[#4B5563]">
                   {draft.idType} number <span className="text-red-500">*</span>
                 </label>
-                {!draft.idRawNumber && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDraft((prev) => ({
-                        ...prev,
-                        idRawNumber: '987654324321',
-                      }));
-                      handleQuickSampleIdPhoto('front');
-                      handleQuickSampleIdPhoto('back');
-                    }}
-                    className="text-xs font-semibold text-[#0F7B49] hover:underline"
-                  >
-                    + Fill Demo Aadhaar &amp; ID Photos
-                  </button>
-                )}
               </div>
               <input
                 type="text"
@@ -1725,16 +1957,31 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
               )}
             </div>
 
-            {/* ID Card Photos (Front & Back) matching video 00:41 */}
+            {/* ID Card Photos (Front & Back) */}
             <div>
-              <label className="block text-xs font-medium text-[#4B5563] mb-2">
-                ID card photos
-              </label>
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-xs font-medium text-[#4B5563]">
+                  ID card photos (Auto-reads ID No. via AI OCR)
+                </label>
+                <button
+                  type="button"
+                  onClick={() =>
+                    triggerFileUpload(
+                      !draft.idFrontUrl ? 'idFrontUrl' : 'idBackUrl',
+                      'gallery'
+                    )
+                  }
+                  className="text-xs font-semibold text-[#0F7B49] flex items-center gap-1"
+                >
+                  <ImageIcon className="w-3.5 h-3.5" />
+                  Gallery
+                </button>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 {(
                   [
-                    { key: 'idFrontUrl', label: 'ID front', side: 'front' },
-                    { key: 'idBackUrl', label: 'ID back', side: 'back' },
+                    { key: 'idFrontUrl', label: 'ID front' },
+                    { key: 'idBackUrl', label: 'ID back' },
                   ] as const
                 ).map((card) => {
                   const url = draft[card.key];
@@ -1764,28 +2011,21 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
                           {isUploading ? (
                             <Loader2 className="w-5 h-5 text-[#0F7B49] animate-spin" />
                           ) : (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => triggerFileUpload(card.key)}
-                                className="flex flex-col items-center justify-center flex-1"
-                              >
-                                <Camera className="w-5 h-5 text-[#0F7B49] mb-1" />
-                                <span className="font-display font-bold text-xs text-[#111827]">
-                                  {card.label}
-                                </span>
-                                <span className="text-[11px] text-[#6B7280]">
-                                  Tap to take photo
-                                </span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleQuickSampleIdPhoto(card.side)}
-                                className="text-[10px] font-semibold text-[#0F7B49] hover:underline"
-                              >
-                                Use Sample ID
-                              </button>
-                            </>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                triggerFileUpload(card.key, 'environment')
+                              }
+                              className="flex flex-col items-center justify-center flex-1 w-full"
+                            >
+                              <Camera className="w-5 h-5 text-[#0F7B49] mb-1" />
+                              <span className="font-display font-bold text-xs text-[#111827]">
+                                {card.label}
+                              </span>
+                              <span className="text-[11px] text-[#6B7280]">
+                                Tap to take photo
+                              </span>
+                            </button>
                           )}
                         </div>
                       )}
@@ -1794,7 +2034,7 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
                 })}
               </div>
               <p className="text-xs font-semibold text-[#0F7B49] mt-2">
-                Tip: keep the Aadhaar number readable for the KYC Register
+                Tip: keep the Aadhaar number readable for AI auto-fill &amp; KYC Register
               </p>
             </div>
 
@@ -1822,14 +2062,18 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
                   </button>
                 </div>
               ) : (
-                <div className="bg-white rounded-2xl border border-[#E5E7EB] p-4 flex items-center justify-between">
+                <div className="bg-white rounded-2xl border border-[#E5E7EB] p-4 flex items-center justify-between gap-2">
                   <button
                     type="button"
-                    onClick={() => triggerFileUpload('sellerPhotoUrl')}
+                    onClick={() => triggerFileUpload('sellerPhotoUrl', 'user')}
                     className="flex items-center gap-3 text-left flex-1"
                   >
-                    <div className="w-10 h-10 rounded-xl bg-[#F3F4F6] text-[#374151] flex items-center justify-center">
-                      <Camera className="w-5 h-5" />
+                    <div className="w-10 h-10 rounded-xl bg-[#E8F5EE] text-[#0F7B49] flex items-center justify-center shrink-0">
+                      {uploadingSlot === 'sellerPhotoUrl' ? (
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                      ) : (
+                        <Camera className="w-5 h-5" />
+                      )}
                     </div>
                     <div>
                       <div className="font-display font-bold text-sm text-[#111827]">
@@ -1842,22 +2086,13 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={async () => {
-                      const { last4 } = maskGovernmentId(
-                        draft.idType,
-                        draft.idRawNumber || '4321'
-                      );
-                      const demoImg = generateSampleIdCardPhoto(
-                        'front',
-                        draft.sellerName || 'Mahesh Joshi',
-                        draft.sellerAddress || 'Indore',
-                        last4
-                      );
-                      setDraft((prev) => ({ ...prev, sellerPhotoUrl: demoImg }));
-                    }}
-                    className="text-xs font-semibold text-[#0F7B49] px-2.5 py-1.5 rounded-lg bg-[#E8F5EE]"
+                    onClick={() =>
+                      triggerFileUpload('sellerPhotoUrl', 'gallery')
+                    }
+                    className="h-9 px-3 rounded-xl border border-[#D1D5DB] text-xs font-semibold text-[#374151] flex items-center gap-1 shrink-0"
                   >
-                    Demo
+                    <ImageIcon className="w-3.5 h-3.5 text-[#0F7B49]" />
+                    Gallery
                   </button>
                 </div>
               )}
@@ -2124,9 +2359,18 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
       {/* Modals */}
       {showScanner && (
         <ImeiScannerModal
-          onScanSuccess={(scannedImei) => {
-            handleImeiInput(scannedImei);
+          onScanSuccess={(scannedImei, aiSpecs) => {
+            handleImeiInput(scannedImei, aiSpecs);
             setShowScanner(false);
+            if (scannedImei) {
+              setScanSuccessNotice(
+                `IMEI ${scannedImei} scanned${
+                  aiSpecs?.brand || aiSpecs?.model
+                    ? ` · ${aiSpecs.brand || ''} ${aiSpecs.model || ''}`.trim()
+                    : ''
+                }`
+              );
+            }
           }}
           onClose={() => setShowScanner(false)}
         />
@@ -2158,7 +2402,7 @@ export const BuyPhoneWizard: React.FC<BuyPhoneWizardProps> = ({
             <p className="text-xs text-[#4B5563] leading-relaxed">
               IMEI:{' '}
               <span className="font-mono font-bold text-[#111827]">
-                {imeiDigits || '356938035643809'}
+                {imeiDigits || 'Enter 15-digit IMEI first'}
               </span>
             </p>
             <div className="p-3 rounded-xl bg-[#E8F5EE] border border-[#A7F3D0] text-xs text-[#064E3B] font-semibold">

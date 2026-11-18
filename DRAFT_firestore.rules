@@ -253,7 +253,8 @@ service cloud.firestore {
             'shapathLanguage', 'updatedAt'
           ]) &&
           hasParentShop(userId);
-        allow delete: if false;
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(kycId) &&
+          resource.data.userId == request.auth.uid && hasParentShop(userId);
       }
 
       match /dues/{dueId} {

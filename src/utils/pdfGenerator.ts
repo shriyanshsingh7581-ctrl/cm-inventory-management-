@@ -34,13 +34,18 @@ export function generateShapathPatraPdf(
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(18);
   doc.setTextColor(17, 24, 39);
-  doc.text(shop.shopName || 'Sharma Mobile Point', 105, 22, { align: 'center' });
+  doc.text(shop.shopName || 'CM Inventory Management', 105, 22, { align: 'center' });
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9.5);
   doc.setTextColor(75, 85, 99);
+  const subHeaderParts = [
+    shop.city ? shop.city : null,
+    shop.phone ? `Phone: ${shop.phone}` : null,
+    shop.email ? `Email: ${shop.email}` : null,
+  ].filter(Boolean);
   doc.text(
-    `${shop.city || 'Shop 12, M.G. Road, Indore'}  |  Phone: ${shop.phone || '+91 98270 11223'}`,
+    subHeaderParts.length > 0 ? subHeaderParts.join('  |  ') : 'Verified Mobile Store & KYC Register',
     105,
     29,
     { align: 'center' }
@@ -63,7 +68,7 @@ export function generateShapathPatraPdf(
   doc.setTextColor(17, 24, 39);
   doc.setFont('helvetica', 'bold');
   doc.text(`Receipt / Stock No: ${phone.stockCode}`, 15, 48);
-  doc.text(`Date: ${phone.purchaseDate || kyc.dateLabel} 2026`, 105, 48, { align: 'center' });
+  doc.text(`Date: ${phone.purchaseDate || kyc.dateLabel} ${new Date().getFullYear()}`, 105, 48, { align: 'center' });
   doc.text(`Grade: Grade ${phone.grade} (${phone.checksPassed}/8 OK)`, 195, 48, { align: 'right' });
 
   doc.line(14, 52, 196, 52);
@@ -269,7 +274,11 @@ export function generateShapathPatraPdf(
 export function generateKycRegisterPdf(
   records: KycRecord[],
   shop: UserProfile,
-  periodLabel = '01 Oct 2026 - 28 Oct 2026',
+  periodLabel = new Date().toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }),
   mode: 'download' | 'print' = 'download'
 ): void {
   const doc = new jsPDF({
@@ -285,11 +294,11 @@ export function generateKycRegisterPdf(
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(15);
   doc.setTextColor(255, 255, 255);
-  doc.text(`${shop.shopName || 'Sharma Mobile Point'} — OFFICIAL KYC REGISTER`, 15, 20);
+  doc.text(`${shop.shopName || 'CM Inventory Management'} — OFFICIAL KYC REGISTER`, 15, 20);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9.5);
-  doc.text(`Period: ${periodLabel}   |   Total Records: ${records.length}   |   100% KYC Verified`, 15, 27);
+  doc.text(`Generated: ${periodLabel}   |   Total Records: ${records.length}   |   100% KYC Verified`, 15, 27);
 
   // Table Headers
   let y = 40;
@@ -310,6 +319,13 @@ export function generateKycRegisterPdf(
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
 
+  if (records.length === 0) {
+    doc.setTextColor(107, 114, 128);
+    doc.text('No KYC transactions recorded yet for this account.', 105, y + 6, {
+      align: 'center',
+    });
+  }
+
   records.forEach((rec, index) => {
     if (y > 272) {
       doc.addPage();
@@ -321,8 +337,12 @@ export function generateKycRegisterPdf(
       doc.rect(10, y - 4.5, 190, 7.5, 'F');
     }
 
+    const todayShort = new Date().toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+    });
     doc.setTextColor(17, 24, 39);
-    doc.text(rec.dateLabel || '28 Oct', 12, y);
+    doc.text(rec.dateLabel || todayShort, 12, y);
     doc.text(rec.stockCode || `OP-${index + 1}`, 30, y);
     doc.setFont('helvetica', 'bold');
     doc.text(`${rec.brand} ${rec.model}`.slice(0, 22), 54, y);
@@ -386,7 +406,7 @@ export function generateSaleBillPdf(
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
   doc.setTextColor(255, 255, 255);
-  doc.text(`${shop.shopName || 'Sharma Mobile Point'} — SALE RECEIPT`, 18, 25);
+  doc.text(`${shop.shopName || 'CM Inventory Management'} — SALE RECEIPT`, 18, 25);
 
   doc.setFontSize(10);
   doc.setTextColor(17, 24, 39);

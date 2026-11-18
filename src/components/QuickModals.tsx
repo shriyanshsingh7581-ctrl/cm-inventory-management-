@@ -9,7 +9,7 @@ import {
   UserProfile,
 } from '../types';
 import { generateKycRegisterPdf } from '../utils/pdfGenerator';
-import { seedInitialShopData } from '../utils/seedData';
+import { ApkVoiceButton } from './SmartVoiceModal';
 import {
   Bell,
   Check,
@@ -22,7 +22,6 @@ import {
   MessageCircle,
   PlayCircle,
   Plus,
-  RefreshCw,
   Share2,
   ShieldCheck,
   Store,
@@ -69,7 +68,7 @@ export const DuesModal: React.FC<DuesModalProps> = ({
         id: dueId,
         userId,
         partyName: partyName.trim().slice(0, 120),
-        partyMobile: partyMobile.replace(/\D/g, '').slice(0, 15) || '9826011223',
+        partyMobile: partyMobile.replace(/\D/g, '').slice(0, 15),
         phoneModel: phoneModel.trim().slice(0, 100) || 'Phone Transaction',
         amount: amt,
         dueType,
@@ -128,16 +127,48 @@ export const DuesModal: React.FC<DuesModalProps> = ({
           </button>
         </div>
 
-        {/* Add New Due Button / Form */}
+        {/* Add New Due Button / Voice Fill */}
         {!showAddForm ? (
-          <button
-            type="button"
-            onClick={() => setShowAddForm(true)}
-            className="w-full h-11 rounded-xl border border-dashed border-[#0F7B49] bg-[#F0FDF4] text-[#0F7B49] font-semibold text-xs flex items-center justify-center gap-1.5"
-          >
-            <Plus className="w-4 h-4" />
-            Add New Customer / Seller Due
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setShowAddForm(true)}
+              className="flex-1 h-11 rounded-xl border border-dashed border-[#0F7B49] bg-[#F0FDF4] text-[#0F7B49] font-semibold text-xs flex items-center justify-center gap-1.5"
+            >
+              <Plus className="w-4 h-4" />
+              Add New Due
+            </button>
+            <ApkVoiceButton
+              context="dues"
+              label="AI Voice"
+              compact
+              className="h-11 px-3.5 rounded-xl bg-[#0F7B49] text-white text-xs font-bold flex items-center gap-1.5 shrink-0"
+              onResult={(voice, raw) => {
+                setShowAddForm(true);
+                if (voice.buyerName || voice.sellerName) {
+                  setPartyName(voice.buyerName || voice.sellerName || '');
+                }
+                if (voice.buyerMobile || voice.sellerMobile) {
+                  setPartyMobile(
+                    (voice.buyerMobile || voice.sellerMobile || '')
+                      .replace(/\D/g, '')
+                      .slice(-10)
+                  );
+                }
+                if (voice.model) {
+                  setPhoneModel(
+                    `${voice.brand ? voice.brand + ' ' : ''}${voice.model}`
+                  );
+                } else if (raw) {
+                  setPhoneModel(raw.slice(0, 60));
+                }
+                const amt =
+                  voice.dueAmount || voice.sellingPrice || voice.buyingPrice;
+                if (amt && amt > 0) setAmount(String(amt));
+                if (voice.intent === 'buy') setDueType('To Pay');
+              }}
+            />
+          </div>
         ) : (
           <form
             onSubmit={handleAddDue}
@@ -210,60 +241,71 @@ export const DuesModal: React.FC<DuesModalProps> = ({
         )}
 
         {/* Dues List */}
-        <div className="space-y-2.5">
-          {dues.map((due) => (
-            <div
-              key={due.id}
-              className="p-3.5 rounded-2xl border border-[#E5E7EB] bg-white flex items-center justify-between gap-3"
-            >
-              <div>
-                <div className="font-display font-bold text-sm text-[#111827]">
-                  {due.partyName}
-                </div>
-                <div className="text-xs text-[#6B7280]">
-                  {due.phoneModel} · {due.dueType}
-                </div>
-                <div className="text-sm font-bold text-[#0F7B49] mt-1">
-                  ₹{due.amount.toLocaleString('en-IN')} · {due.status}
-                </div>
-              </div>
-
-              {due.status === 'Pending' ? (
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const text = `Namaste ${due.partyName}, friendly reminder for pending balance of ₹${due.amount.toLocaleString('en-IN')} for ${due.phoneModel}.`;
-                      window.open(
-                        `https://wa.me/91${due.partyMobile}?text=${encodeURIComponent(
-                          text
-                        )}`,
-                        '_blank',
-                        'noopener,noreferrer'
-                      );
-                    }}
-                    className="h-9 px-2.5 rounded-xl border border-[#D1D5DB] text-xs font-semibold text-[#0F7B49] flex items-center gap-1"
-                  >
-                    <MessageCircle className="w-3.5 h-3.5" />
-                    Remind
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSettleDue(due)}
-                    className="h-9 px-3 rounded-xl bg-[#0F7B49] text-white text-xs font-semibold flex items-center gap-1"
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                    Settle
-                  </button>
-                </div>
-              ) : (
-                <span className="text-xs font-semibold text-[#6B7280]">
-                  ✓ Settled
-                </span>
-              )}
+        {dues.length === 0 ? (
+          <div className="p-6 rounded-2xl border border-[#E5E7EB] bg-[#F9FAFB] text-center space-y-1">
+            <div className="font-display font-bold text-sm text-[#111827]">
+              No pending dues
             </div>
-          ))}
-        </div>
+            <p className="text-xs text-[#6B7280]">
+              Any unpaid customer or seller balance will appear here for your shop account.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {dues.map((due) => (
+              <div
+                key={due.id}
+                className="p-3.5 rounded-2xl border border-[#E5E7EB] bg-white flex items-center justify-between gap-3"
+              >
+                <div>
+                  <div className="font-display font-bold text-sm text-[#111827]">
+                    {due.partyName}
+                  </div>
+                  <div className="text-xs text-[#6B7280]">
+                    {due.phoneModel} · {due.dueType}
+                  </div>
+                  <div className="text-sm font-bold text-[#0F7B49] mt-1">
+                    ₹{due.amount.toLocaleString('en-IN')} · {due.status}
+                  </div>
+                </div>
+
+                {due.status === 'Pending' ? (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const text = `Namaste ${due.partyName}, friendly reminder for pending balance of ₹${due.amount.toLocaleString('en-IN')} for ${due.phoneModel}.`;
+                        window.open(
+                          `https://wa.me/91${due.partyMobile}?text=${encodeURIComponent(
+                            text
+                          )}`,
+                          '_blank',
+                          'noopener,noreferrer'
+                        );
+                      }}
+                      className="h-9 px-2.5 rounded-xl border border-[#D1D5DB] text-xs font-semibold text-[#0F7B49] flex items-center gap-1"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5" />
+                      Remind
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSettleDue(due)}
+                      className="h-9 px-3 rounded-xl bg-[#0F7B49] text-white text-xs font-semibold flex items-center gap-1"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      Settle
+                    </button>
+                  </div>
+                ) : (
+                  <span className="text-xs font-semibold text-[#6B7280]">
+                    ✓ Settled
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -286,17 +328,27 @@ export const ShareStockModal: React.FC<ShareStockModalProps> = ({
   const [copied, setCopied] = useState(false);
   const readyPhones = inventory.filter((p) => p.status === 'Ready');
 
-  const catalogText = [
-    `📱 *${shopProfile.shopName} — Ready Pre-Owned Phones*`,
-    `📍 ${shopProfile.city || 'Indore'} | 📞 ${shopProfile.phone || '+91 98270 11223'}`,
-    `--------------------------------`,
-    ...readyPhones.map(
-      (p, i) =>
-        `${i + 1}. *${p.brand} ${p.model}* (${p.ram}/${p.storage}) — Grade ${p.grade} — *₹${p.expectedSellingPrice.toLocaleString('en-IN')}*`
-    ),
-    `--------------------------------`,
-    `✅ 100% KYC Verified Phones with Bill & Box`,
-  ].join('\n');
+  const catalogLocationParts = [
+    shopProfile.city ? `📍 ${shopProfile.city}` : null,
+    shopProfile.phone ? `📞 ${shopProfile.phone}` : null,
+  ].filter(Boolean);
+
+  const catalogText =
+    readyPhones.length === 0
+      ? `📱 *${shopProfile.shopName}*\nNo ready phones in stock right now. Check back soon!`
+      : [
+          `📱 *${shopProfile.shopName} — Ready Pre-Owned Phones*`,
+          ...(catalogLocationParts.length > 0
+            ? [catalogLocationParts.join(' | ')]
+            : []),
+          `--------------------------------`,
+          ...readyPhones.map(
+            (p, i) =>
+              `${i + 1}. *${p.brand} ${p.model}* (${p.ram}/${p.storage}) — Grade ${p.grade} — *₹${p.expectedSellingPrice.toLocaleString('en-IN')}*`
+          ),
+          `--------------------------------`,
+          `✅ 100% KYC Verified Phones with Bill & Box`,
+        ].join('\n');
 
   const handleCopy = () => {
     navigator.clipboard.writeText(catalogText);
@@ -637,7 +689,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             generateKycRegisterPdf(
               kycRecords,
               shopProfile,
-              '01 Oct 2026 - 28 Oct 2026',
+              new Date().toLocaleDateString('en-IN', {
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric',
+              }),
               'download'
             )
           }
@@ -778,8 +834,14 @@ export const MoreView: React.FC<MoreViewProps> = ({
   const [city, setCity] = useState(shopProfile.city);
   const [savingProfile, setSavingProfile] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
-  const [seeding, setSeeding] = useState(false);
   const [showRefVideo, setShowRefVideo] = useState(false);
+
+  React.useEffect(() => {
+    setShopName(shopProfile.shopName);
+    setOwnerName(shopProfile.ownerName);
+    setPhone(shopProfile.phone);
+    setCity(shopProfile.city);
+  }, [shopProfile.shopName, shopProfile.ownerName, shopProfile.phone, shopProfile.city]);
 
   const handleSaveShopProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -787,8 +849,8 @@ export const MoreView: React.FC<MoreViewProps> = ({
     const path = `users/${userId}`;
     try {
       await updateDoc(doc(db, 'users', userId), {
-        shopName: shopName.trim().slice(0, 120) || 'Sharma Mobile Point',
-        ownerName: ownerName.trim().slice(0, 120) || 'Rajesh Sharma',
+        shopName: shopName.trim().slice(0, 120) || 'My Mobile Shop',
+        ownerName: ownerName.trim().slice(0, 120) || 'Shop Owner',
         phone: phone.trim().slice(0, 20),
         city: city.trim().slice(0, 200),
         updatedAt: serverTimestamp(),
@@ -799,15 +861,6 @@ export const MoreView: React.FC<MoreViewProps> = ({
       handleFirestoreError(error, OperationType.UPDATE, path);
     } finally {
       setSavingProfile(false);
-    }
-  };
-
-  const handleResetDemoData = async () => {
-    setSeeding(true);
-    try {
-      await seedInitialShopData(userId);
-    } finally {
-      setSeeding(false);
     }
   };
 
@@ -920,23 +973,6 @@ export const MoreView: React.FC<MoreViewProps> = ({
             Pending Dues &amp; Udhaar Tracker
           </span>
           <span className="text-xs font-semibold text-[#0F7B49]">Open &rarr;</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={handleResetDemoData}
-          disabled={seeding}
-          className="w-full p-4 flex items-center justify-between text-left hover:bg-[#F9FAFB]"
-        >
-          <div className="flex items-center gap-2">
-            <RefreshCw className={`w-4 h-4 text-[#0F7B49] ${seeding ? 'animate-spin' : ''}`} />
-            <span className="font-display font-semibold text-sm text-[#111827]">
-              Restore / Sync Reference Video Demo Stock
-            </span>
-          </div>
-          <span className="text-xs font-semibold text-[#0F7B49]">
-            {seeding ? 'Syncing...' : 'Sync Now'}
-          </span>
         </button>
 
         <button

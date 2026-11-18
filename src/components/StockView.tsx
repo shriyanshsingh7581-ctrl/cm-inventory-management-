@@ -3,6 +3,7 @@ import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { KycRecord, PhoneInventoryItem, UserProfile } from '../types';
 import { generateShapathPatraPdf } from '../utils/pdfGenerator';
+import { ApkVoiceButton } from './SmartVoiceModal';
 import {
   CheckSquare,
   FileText,
@@ -54,6 +55,11 @@ export const StockView: React.FC<StockViewProps> = ({
     null
   );
   const [updatingStatus, setUpdatingStatus] = useState(false);
+
+  React.useEffect(() => {
+    setStatusFilter(initialFilter === '30+ days' ? 'All' : initialFilter);
+    setSecondaryFilter(initialFilter === '30+ days' ? '30+ days' : null);
+  }, [initialFilter]);
 
   // Active (unsold) phones count & total cost matching video header "9 phones · cost ₹78,000"
   const activeStock = useMemo(
@@ -171,25 +177,43 @@ export const StockView: React.FC<StockViewProps> = ({
           </div>
         </div>
 
-        {/* Search Input */}
-        <div className="relative mb-3">
-          <Search className="w-4 h-4 text-[#9CA3AF] absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search model, IMEI or seller"
-            className="w-full h-11 pl-10 pr-9 rounded-xl bg-[#F9FAFB] border border-[#E5E7EB] text-sm text-[#111827] focus:outline-none focus:bg-white focus:border-[#0F7B49]"
+        {/* Search Input + 3-Layer APK Voice Search */}
+        <div className="flex items-center gap-2 mb-3">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-[#9CA3AF] absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search model, IMEI or seller"
+              className="w-full h-11 pl-10 pr-9 rounded-xl bg-[#F9FAFB] border border-[#E5E7EB] text-sm text-[#111827] focus:outline-none focus:bg-white focus:border-[#0F7B49]"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B7280]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+          <ApkVoiceButton
+            context="search_stock"
+            label="Voice"
+            compact
+            className="h-11 px-3 rounded-xl bg-[#E8F5EE] hover:bg-[#D1FAE5] text-[#0F7B49] text-xs font-bold flex items-center gap-1.5 shrink-0"
+            onResult={(voice, raw) => {
+              const q =
+                voice.imei ||
+                voice.searchQuery ||
+                voice.model ||
+                voice.brand ||
+                voice.sellerName ||
+                raw;
+              if (q) setSearchQuery(q.trim());
+            }}
           />
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => setSearchQuery('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B7280]"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
         </div>
 
         {/* Primary Status Filter Row matching 00:57 */}
@@ -438,20 +462,46 @@ export const StockView: React.FC<StockViewProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  const linkedKyc = kycRecords.find(
-                    (k) =>
-                      k.id === selectedPhone.kycId ||
-                      k.phoneId === selectedPhone.id
+                  const linkedKyc: KycRecord =
+                    kycRecords.find(
+                      (k) =>
+                        k.id === selectedPhone.kycId ||
+                        k.phoneId === selectedPhone.id
+                    ) || {
+                      id: selectedPhone.kycId || `kyc_${selectedPhone.id}`,
+                      userId: selectedPhone.userId,
+                      phoneId: selectedPhone.id,
+                      stockCode: selectedPhone.stockCode,
+                      transactionType: 'BUY',
+                      dateLabel: selectedPhone.purchaseDate || 'today',
+                      brand: selectedPhone.brand,
+                      model: selectedPhone.model,
+                      ram: selectedPhone.ram,
+                      storage: selectedPhone.storage,
+                      imei: selectedPhone.imei,
+                      price: selectedPhone.buyingPrice,
+                      paymentMethod: selectedPhone.paymentMethod,
+                      partyName: selectedPhone.sellerName,
+                      partyMobile: selectedPhone.sellerMobile,
+                      partyAddress: selectedPhone.sellerAddress,
+                      idType: selectedPhone.idType,
+                      idLast4: selectedPhone.idMasked.slice(-4) || '0000',
+                      idMasked: selectedPhone.idMasked,
+                      idFrontUrl: '',
+                      idBackUrl: '',
+                      sellerPhotoUrl: '',
+                      signatureDataUrl: '',
+                      shapathLanguage: 'Hindi',
+                      idVerified: true,
+                      shapathSigned: true,
+                    };
+                  generateShapathPatraPdf(
+                    selectedPhone,
+                    linkedKyc,
+                    shopProfile,
+                    linkedKyc.shapathLanguage || 'Hindi',
+                    'download'
                   );
-                  if (linkedKyc) {
-                    generateShapathPatraPdf(
-                      selectedPhone,
-                      linkedKyc,
-                      shopProfile,
-                      linkedKyc.shapathLanguage || 'Hindi',
-                      'download'
-                    );
-                  }
                 }}
                 className="w-full h-11 rounded-xl bg-[#F3F4F6] hover:bg-[#E5E7EB] text-[#111827] font-semibold text-xs flex items-center justify-center gap-2"
               >

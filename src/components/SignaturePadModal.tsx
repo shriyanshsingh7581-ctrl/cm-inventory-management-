@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
-import { generateDemoSignatureDataUrl } from '../utils/imeiDatabase';
 
 interface SignaturePadModalProps {
   onSave: (signatureDataUrl: string) => void;
@@ -8,7 +7,7 @@ interface SignaturePadModalProps {
 }
 
 /**
- * Full-screen native signature canvas pad matching 00:44 in the reference video:
+ * Full-screen native signature canvas pad:
  * Header: X | Seller signature (Sign inside the box with your finger) | Clear
  * Body: Full canvas area
  * Bottom: Green "Done" button
@@ -99,19 +98,37 @@ export const SignaturePadModal: React.FC<SignaturePadModalProps> = ({
   };
 
   const handleDone = () => {
-    if (!hasStrokes) {
-      onSave(generateDemoSignatureDataUrl());
-      return;
-    }
+    if (!hasStrokes) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    onSave(canvas.toDataURL('image/png'));
+
+    // Export onto a clean max-640px JPEG/PNG so high-DPI signatures stay well under Firestore 150KB limit
+    const maxWidth = 640;
+    const scale = Math.min(1, maxWidth / canvas.width);
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = Math.max(1, Math.round(canvas.width * scale));
+    outCanvas.height = Math.max(1, Math.round(canvas.height * scale));
+    const outCtx = outCanvas.getContext('2d');
+    if (outCtx) {
+      outCtx.fillStyle = '#FFFFFF';
+      outCtx.fillRect(0, 0, outCanvas.width, outCanvas.height);
+      outCtx.drawImage(canvas, 0, 0, outCanvas.width, outCanvas.height);
+      const pngData = outCanvas.toDataURL('image/png');
+      if (pngData.length <= 130000) {
+        onSave(pngData);
+        return;
+      }
+      onSave(outCanvas.toDataURL('image/jpeg', 0.8));
+      return;
+    }
+
+    onSave(canvas.toDataURL('image/jpeg', 0.8));
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-white flex flex-col">
-      {/* Top Bar matching video 00:44 */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[#E5E7EB]">
+    <div className="fixed inset-0 h-dvh z-50 bg-white flex flex-col">
+      {/* Top Bar */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[#E5E7EB] shrink-0">
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -154,17 +171,17 @@ export const SignaturePadModal: React.FC<SignaturePadModalProps> = ({
         {!hasStrokes && (
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-[#9CA3AF]">
             <p className="text-sm font-medium">Draw seller signature here</p>
-            <p className="text-xs mt-1">(Or tap Done to apply verified signature)</p>
           </div>
         )}
       </div>
 
-      {/* Bottom Sticky Done Button matching video 00:45 */}
-      <div className="p-4 border-t border-[#E5E7EB] bg-white">
+      {/* Bottom Sticky Done Button */}
+      <div className="p-4 border-t border-[#E5E7EB] bg-white shrink-0">
         <button
           type="button"
+          disabled={!hasStrokes}
           onClick={handleDone}
-          className="w-full h-12 rounded-xl bg-[#0F7B49] hover:bg-[#0C633A] text-white font-semibold text-base flex items-center justify-center active:scale-[0.99] transition-transform"
+          className="w-full h-12 rounded-xl bg-[#0F7B49] hover:bg-[#0C633A] text-white font-semibold text-base flex items-center justify-center active:scale-[0.99] transition-transform disabled:opacity-50"
         >
           Done
         </button>

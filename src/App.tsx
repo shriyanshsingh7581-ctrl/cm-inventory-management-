@@ -13,6 +13,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  updateDoc,
   where,
 } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
@@ -22,7 +23,12 @@ import {
   PhoneInventoryItem,
   UserProfile,
 } from './types';
-import { seedInitialShopData } from './utils/seedData';
+import {
+  isLegacySeededDueId,
+  isLegacySeededKycId,
+  isLegacySeededPhoneId,
+  purgeLegacySeededData,
+} from './utils/seedData';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { AuthScreen } from './components/AuthScreen';
 import { BuyPhoneWizard } from './components/BuyPhoneWizard';
@@ -30,6 +36,11 @@ import { SellPhoneModal } from './components/SellPhoneModal';
 import { StockView } from './components/StockView';
 import { KycRegisterView } from './components/KycRegisterView';
 import { ImeiScannerModal } from './components/ImeiScannerModal';
+import { ApkVoiceButton } from './components/SmartVoiceModal';
+import {
+  AiExtractedScanResult,
+  AiExtractedVoiceResult,
+} from './utils/apkMediaEngine';
 import {
   DuesModal,
   MoreView,
@@ -56,6 +67,32 @@ import {
   Truck,
 } from 'lucide-react';
 
+function deriveDefaultShopAndOwner(
+  user: FirebaseUser,
+  pendingMeta: { shopName: string; ownerName: string }
+): { shopName: string; ownerName: string } {
+  const emailPrefix = (user.email || 'user')
+    .split('@')[0]
+    .replace(/[._-]+/g, ' ')
+    .replace(/\b\w/g, (l) => l.toUpperCase())
+    .trim();
+
+  const ownerName = (
+    pendingMeta.ownerName.trim() ||
+    (user.displayName && user.displayName.trim()) ||
+    emailPrefix ||
+    'Shop Owner'
+  ).slice(0, 120);
+
+  const shopName = (
+    pendingMeta.shopName.trim() ||
+    (user.displayName ? `${user.displayName.trim()} Mobile` : '') ||
+    (emailPrefix ? `${emailPrefix} Mobile` : 'My Mobile Shop')
+  ).slice(0, 120);
+
+  return { shopName, ownerName };
+}
+
 export function AppContent() {
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -63,7 +100,6 @@ export function AppContent() {
   const [inventory, setInventory] = useState<PhoneInventoryItem[]>([]);
   const [kycRecords, setKycRecords] = useState<KycRecord[]>([]);
   const [dues, setDues] = useState<DueRecord[]>([]);
-  const [seedingInitial, setSeedingInitial] = useState(false);
 
   // Navigation & Active Modals
   const [activeTab, setActiveTab] = useState<'Home' | 'Stock' | 'Reports' | 'More'>(
@@ -85,35 +121,45 @@ export function AppContent() {
   const [showProPlanModal, setShowProPlanModal] = useState(false);
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
   const [showScannerSearch, setShowScannerSearch] = useState(false);
+  const [pendingScanForBuy, setPendingScanForBuy] =
+    useState<AiExtractedScanResult | null>(null);
+  const [pendingVoiceForBuy, setPendingVoiceForBuy] =
+    useState<AiExtractedVoiceResult | null>(null);
 
   const pendingShopMetaRef = useRef<{ shopName: string; ownerName: string }>({
-    shopName: 'Sharma Mobile Point',
-    ownerName: 'Rajesh Sharma',
+    shopName: '',
+    ownerName: '',
   });
-  const seededOnceRef = useRef<string | null>(null);
 
-  // 1. Listen to Firebase Authentication State
+  // 1. Listen to Authentication State & isolate each user's shop profile
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
       setAuthReady(true);
 
+      // Immediately clear state when switching users so another user's data never flashes
+      setShopProfile(null);
+      setInventory([]);
+      setKycRecords([]);
+      setDues([]);
+
       if (user) {
         const userDocRef = doc(db, 'users', user.uid);
+        const derived = deriveDefaultShopAndOwner(
+          user,
+          pendingShopMetaRef.current
+        );
         try {
           const snap = await getDoc(userDocRef);
+
           if (!snap.exists()) {
             const newProfile: UserProfile = {
               uid: user.uid,
-              email: user.email || 'shop@mobileone.app',
-              shopName:
-                pendingShopMetaRef.current.shopName || 'Sharma Mobile Point',
-              ownerName:
-                user.displayName ||
-                pendingShopMetaRef.current.ownerName ||
-                'Rajesh Sharma',
-              phone: '+91 98270 11223',
-              city: 'Shop 12, M.G. Road, Indore',
+              email: (user.email || '').slice(0, 254),
+              shopName: derived.shopName,
+              ownerName: derived.ownerName,
+              phone: '',
+              city: '',
               planStatus: 'trial',
               trialDaysLeft: 12,
             };
@@ -123,32 +169,57 @@ export function AppContent() {
               updatedAt: serverTimestamp(),
             });
             setShopProfile(newProfile);
-
-            // Seed initial reference stock & KYC records on brand-new shop registration
-            if (seededOnceRef.current !== user.uid) {
-              seededOnceRef.current = user.uid;
-              setSeedingInitial(true);
-              await seedInitialShopData(user.uid);
-              setSeedingInitial(false);
-            }
+            pendingShopMetaRef.current = { shopName: '', ownerName: '' };
           } else {
-            setShopProfile(snap.data() as UserProfile);
+            const existing = snap.data() as UserProfile;
+            // Clean up legacy hardcoded mock profile if it was created by old seed logic
+            if (
+              existing.shopName === 'Sharma Mobile Point' &&
+              existing.phone === '+91 98270 11223'
+            ) {
+              const cleanedProfile: UserProfile = {
+                ...existing,
+                uid: user.uid,
+                email: user.email || existing.email || '',
+                shopName: derived.shopName,
+                ownerName: derived.ownerName,
+                phone: '',
+                city: '',
+              };
+              await updateDoc(userDocRef, {
+                shopName: derived.shopName,
+                ownerName: derived.ownerName,
+                phone: '',
+                city: '',
+                updatedAt: serverTimestamp(),
+              });
+              setShopProfile(cleanedProfile);
+            } else {
+              setShopProfile(existing);
+            }
           }
         } catch (error) {
-          handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
+          console.error('Profile initialization error:', error);
+          setShopProfile({
+            uid: user.uid,
+            email: user.email || '',
+            shopName: derived.shopName,
+            ownerName: derived.ownerName,
+            phone: '',
+            city: '',
+            planStatus: 'trial',
+            trialDaysLeft: 12,
+          });
         }
       } else {
         setShopProfile(null);
-        setInventory([]);
-        setKycRecords([]);
-        setDues([]);
       }
     });
 
     return () => unsub();
   }, []);
 
-  // 2. Attach real-time Firestore listeners once authenticated and shop profile exists
+  // 2. Attach real-time listeners strictly isolated to the logged-in user's UID
   useEffect(() => {
     if (!authReady || !currentUser || !shopProfile) return;
 
@@ -172,30 +243,31 @@ export function AppContent() {
     );
     const unsubInventory = onSnapshot(
       invQuery,
-      async (snap) => {
-        const items = snap.docs.map((d) => d.data() as PhoneInventoryItem);
-        // Sort newest ("today") first so newly purchased phones appear at the very top of Stock!
+      (snap) => {
+        const legacyPhoneIds: string[] = [];
+        const items: PhoneInventoryItem[] = [];
+
+        snap.docs.forEach((d) => {
+          if (isLegacySeededPhoneId(d.id)) {
+            legacyPhoneIds.push(d.id);
+          } else {
+            const data = d.data() as PhoneInventoryItem;
+            if (data.userId === uid) {
+              items.push(data);
+            }
+          }
+        });
+
+        if (legacyPhoneIds.length > 0) {
+          void purgeLegacySeededData(uid, legacyPhoneIds, [], []);
+        }
+
         items.sort((a, b) => {
           if (a.purchaseDate === 'today' && b.purchaseDate !== 'today') return -1;
           if (b.purchaseDate === 'today' && a.purchaseDate !== 'today') return 1;
           return a.daysInStock - b.daysInStock;
         });
         setInventory(items);
-
-        // If existing account has 0 phones and hasn't been seeded in this session, auto-seed
-        if (
-          items.length === 0 &&
-          seededOnceRef.current !== uid &&
-          !seedingInitial
-        ) {
-          seededOnceRef.current = uid;
-          setSeedingInitial(true);
-          try {
-            await seedInitialShopData(uid);
-          } finally {
-            setSeedingInitial(false);
-          }
-        }
       },
       (error) => {
         handleFirestoreError(
@@ -213,12 +285,25 @@ export function AppContent() {
     const unsubKyc = onSnapshot(
       kycQuery,
       (snap) => {
-        const records = snap.docs.map((d) => d.data() as KycRecord);
-        records.sort((a, b) => {
-          if (a.dateLabel === '28 Oct' && b.dateLabel !== '28 Oct') return -1;
-          if (b.dateLabel === '28 Oct' && a.dateLabel !== '28 Oct') return 1;
-          return b.id.localeCompare(a.id);
+        const legacyKycIds: string[] = [];
+        const records: KycRecord[] = [];
+
+        snap.docs.forEach((d) => {
+          if (isLegacySeededKycId(d.id)) {
+            legacyKycIds.push(d.id);
+          } else {
+            const data = d.data() as KycRecord;
+            if (data.userId === uid) {
+              records.push(data);
+            }
+          }
         });
+
+        if (legacyKycIds.length > 0) {
+          void purgeLegacySeededData(uid, [], legacyKycIds, []);
+        }
+
+        records.sort((a, b) => b.id.localeCompare(a.id));
         setKycRecords(records);
       },
       (error) => {
@@ -237,7 +322,24 @@ export function AppContent() {
     const unsubDues = onSnapshot(
       duesQuery,
       (snap) => {
-        const records = snap.docs.map((d) => d.data() as DueRecord);
+        const legacyDueIds: string[] = [];
+        const records: DueRecord[] = [];
+
+        snap.docs.forEach((d) => {
+          if (isLegacySeededDueId(d.id)) {
+            legacyDueIds.push(d.id);
+          } else {
+            const data = d.data() as DueRecord;
+            if (data.userId === uid) {
+              records.push(data);
+            }
+          }
+        });
+
+        if (legacyDueIds.length > 0) {
+          void purgeLegacySeededData(uid, [], [], legacyDueIds);
+        }
+
         setDues(records);
       },
       (error) => {
@@ -251,7 +353,7 @@ export function AppContent() {
       unsubKyc();
       unsubDues();
     };
-  }, [authReady, currentUser, shopProfile?.uid, seedingInitial]);
+  }, [authReady, currentUser, shopProfile?.uid]);
 
   // 3. Computed Home Screen Metrics (matching video 00:04 and updating dynamically on new buys/sells!)
   const dashboardMetrics = useMemo(() => {
@@ -324,18 +426,28 @@ export function AppContent() {
     );
   }
 
+  const fallbackMeta = deriveDefaultShopAndOwner(
+    currentUser,
+    pendingShopMetaRef.current
+  );
+
   const activeShop: UserProfile = shopProfile || {
     uid: currentUser.uid,
-    email: currentUser.email || 'shop@mobileone.app',
-    shopName: 'Sharma Mobile Point',
-    ownerName: 'Rajesh Sharma',
-    phone: '+91 98270 11223',
-    city: 'Shop 12, M.G. Road, Indore',
+    email: currentUser.email || '',
+    shopName: fallbackMeta.shopName,
+    ownerName: fallbackMeta.ownerName,
+    phone: '',
+    city: '',
     planStatus: 'trial',
     trialDaysLeft: 12,
   };
 
-  const shopInitial = (activeShop.shopName || 'S').charAt(0).toUpperCase();
+  const shopInitial = (activeShop.shopName || 'C').charAt(0).toUpperCase();
+  const formattedToday = new Date().toLocaleDateString('en-IN', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'short',
+  });
 
   return (
     <div className="min-h-screen bg-[#F6F7F8] text-[#111827]">
@@ -362,12 +474,30 @@ export function AppContent() {
                       {activeShop.shopName}
                     </h1>
                     <p className="text-xs text-[#6B7280] truncate">
-                      CM Inventory Management · Wednesday, 28 Oct
+                      CM Inventory Management · {formattedToday}
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2.5">
+                <div className="flex items-center gap-2">
+                  {/* Universal APK AI Voice Quick Fill */}
+                  <ApkVoiceButton
+                    context="general"
+                    label="AI Voice"
+                    compact
+                    onResult={(voice) => {
+                      if (voice.intent === 'sell') {
+                        setSellModalPhone('open');
+                      } else if (voice.intent === 'due') {
+                        setShowDuesModal(true);
+                      } else {
+                        setPendingScanForBuy(null);
+                        setPendingVoiceForBuy(voice);
+                        setBuyWizardMode('Customer');
+                      }
+                    }}
+                  />
+
                   {/* Notification Bell with Red Indicator */}
                   <button
                     type="button"
@@ -382,7 +512,7 @@ export function AppContent() {
                     )}
                   </button>
 
-                  {/* Profile Avatar Circle ("S") */}
+                  {/* Profile Avatar Circle */}
                   <button
                     type="button"
                     onClick={() => setActiveTab('More')}
@@ -395,13 +525,6 @@ export function AppContent() {
               </header>
 
               <main className="p-4 space-y-4">
-                {seedingInitial && (
-                  <div className="bg-[#E8F5EE] border border-[#A7F3D0] rounded-2xl p-3 flex items-center gap-2.5 text-xs font-semibold text-[#064E3B]">
-                    <Loader2 className="w-4 h-4 animate-spin text-[#0F7B49]" />
-                    Syncing your shop inventory &amp; KYC records...
-                  </div>
-                )}
-
                 {/* Top Primary Actions: Buy phone & Sell phone (00:04) */}
                 <div className="grid grid-cols-2 gap-3">
                   <button
@@ -777,41 +900,47 @@ export function AppContent() {
                 <span className="text-[#0F7B49]">100% KYC Verified</span>
               </div>
               <div className="divide-y divide-[#F3F4F6] border border-[#E5E7EB] rounded-2xl overflow-hidden">
-                {inventory
-                  .filter((p) => p.status !== 'Sold')
-                  .slice(0, 5)
-                  .map((p) => (
-                    <div
-                      key={p.id}
-                      className="px-3.5 py-2.5 flex items-center justify-between text-xs bg-white"
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <Smartphone className="w-4 h-4 text-[#0F7B49] shrink-0" />
-                        <div className="truncate">
-                          <span className="font-bold text-[#111827]">
-                            {p.brand} {p.model}
-                          </span>{' '}
-                          <span className="text-[#6B7280]">
-                            ({p.ram}/{p.storage}) · Grade {p.grade}
+                {inventory.filter((p) => p.status !== 'Sold').length === 0 ? (
+                  <div className="px-4 py-6 text-center text-xs text-[#6B7280] bg-white">
+                    No phones in stock for this account yet. Click &ldquo;Buy phone&rdquo; to add your first device.
+                  </div>
+                ) : (
+                  inventory
+                    .filter((p) => p.status !== 'Sold')
+                    .slice(0, 5)
+                    .map((p) => (
+                      <div
+                        key={p.id}
+                        className="px-3.5 py-2.5 flex items-center justify-between text-xs bg-white"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <Smartphone className="w-4 h-4 text-[#0F7B49] shrink-0" />
+                          <div className="truncate">
+                            <span className="font-bold text-[#111827]">
+                              {p.brand} {p.model}
+                            </span>{' '}
+                            <span className="text-[#6B7280]">
+                              ({p.ram}/{p.storage}) · Grade {p.grade}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 shrink-0">
+                          <span className="font-bold text-[#111827] tabular-nums">
+                            ₹{p.buyingPrice.toLocaleString('en-IN')}
+                          </span>
+                          <span
+                            className={`font-semibold ${
+                              p.status === 'Ready'
+                                ? 'text-[#0F7B49]'
+                                : 'text-[#D97706]'
+                            }`}
+                          >
+                            {p.status}
                           </span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3 shrink-0">
-                        <span className="font-bold text-[#111827] tabular-nums">
-                          ₹{p.buyingPrice.toLocaleString('en-IN')}
-                        </span>
-                        <span
-                          className={`font-semibold ${
-                            p.status === 'Ready'
-                              ? 'text-[#0F7B49]'
-                              : 'text-[#D97706]'
-                          }`}
-                        >
-                          {p.status}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
+                    ))
+                )}
               </div>
             </div>
 
@@ -866,7 +995,13 @@ export function AppContent() {
           shopProfile={activeShop}
           existingInventory={inventory}
           initialSourceType={buyWizardMode}
-          onClose={() => setBuyWizardMode(null)}
+          initialScannedSpecs={pendingScanForBuy}
+          initialVoiceDraft={pendingVoiceForBuy}
+          onClose={() => {
+            setBuyWizardMode(null);
+            setPendingScanForBuy(null);
+            setPendingVoiceForBuy(null);
+          }}
           onComplete={() => {
             // Phone & KYC record are automatically synced via Firestore onSnapshot
           }}
@@ -931,12 +1066,19 @@ export function AppContent() {
 
       {showScannerSearch && (
         <ImeiScannerModal
-          onScanSuccess={(scannedImei) => {
+          onScanSuccess={(scannedImei, aiSpecs) => {
             setShowScannerSearch(false);
             const found = inventory.find((p) => p.imei === scannedImei);
             if (found) {
               setSellModalPhone(found);
             } else {
+              setPendingVoiceForBuy(null);
+              setPendingScanForBuy(
+                aiSpecs || {
+                  imei: scannedImei,
+                  sourceMethod: 'local_barcode',
+                }
+              );
               setBuyWizardMode('Customer');
             }
           }}
