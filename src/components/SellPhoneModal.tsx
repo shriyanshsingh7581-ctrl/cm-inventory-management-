@@ -668,8 +668,17 @@ export const SellPhoneModal: React.FC<SellPhoneModalProps> = ({
 
       {showScanner && (
         <ImeiScannerModal
-          onScanSuccess={(scannedImei) => {
-            const matched = availablePhones.find((p) => p.imei === scannedImei);
+          onScanSuccess={(scannedImei, aiSpecs) => {
+            const candidateImeis = new Set(
+              [scannedImei, aiSpecs?.imei2, ...(aiSpecs?.allImeis || [])].filter(
+                Boolean
+              )
+            );
+            const matched = availablePhones.find(
+              (p) =>
+                candidateImeis.has(p.imei) ||
+                (p.imei2 ? candidateImeis.has(p.imei2) : false)
+            );
             if (matched) {
               setScanNotice(null);
               handleSelectPhone(matched.id);

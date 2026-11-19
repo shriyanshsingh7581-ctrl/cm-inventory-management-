@@ -1222,7 +1222,16 @@ export function AppContent() {
         <ImeiScannerModal
           onScanSuccess={(scannedImei, aiSpecs) => {
             setShowScannerSearch(false);
-            const found = inventory.find((p) => p.imei === scannedImei);
+            const candidateImeis = new Set(
+              [scannedImei, aiSpecs?.imei2, ...(aiSpecs?.allImeis || [])].filter(
+                Boolean
+              )
+            );
+            const found = inventory.find(
+              (p) =>
+                candidateImeis.has(p.imei) ||
+                (p.imei2 ? candidateImeis.has(p.imei2) : false)
+            );
             if (found) {
               setSellModalPhone(found);
             } else {
